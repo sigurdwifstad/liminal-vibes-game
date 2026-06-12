@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import random
 from typing import Optional
 
 import pygame
@@ -30,11 +31,12 @@ class AudioManager:
             self.ambient_sound = None
             self.footstep_sound = None
             self.monster_appearing_sound = None
-            self.monster_scream_sound = None
+            self.monster_scream_sounds = []
             self.ambient_channel = None
             self.footstep_channel = None
             self.monster_appearing_channel = None
             self.monster_scream_channel = None
+            self._last_monster_scream_index = None
             self.ambient_playing = False
             self.footstep_playing = False
             self.monster_appearing_cooldown_seconds = 30.0
@@ -59,7 +61,8 @@ class AudioManager:
         self.monster_appearing_channel = None
         self.monster_appearing_sound = None
         self.monster_scream_channel = None
-        self.monster_scream_sound = None
+        self.monster_scream_sounds = []
+        self._last_monster_scream_index: Optional[int] = None
         self.monster_appearing_cooldown_seconds = 30.0
         self.last_monster_appearing_at: Optional[float] = None
         self.monster_scream_cooldown_seconds = 2.8
@@ -99,20 +102,23 @@ class AudioManager:
                 print(f"Warning: Monster appearing sound not found at {monster_appearing_path}")
                 self.monster_appearing_sound = None
 
-            monster_scream_path = self.resources_path / "monster_scream.mp3"
-            if monster_scream_path.exists():
-                self.monster_scream_sound = pygame.mixer.Sound(str(monster_scream_path))
-                self.monster_scream_sound.set_volume(self.sfx_volume)
+            self.monster_scream_sounds = []
+            for index in range(1, 4):
+                monster_scream_path = self.resources_path / f"monster_scream_{index}.mp3"
+                if not monster_scream_path.exists():
+                    print(f"Warning: Monster scream sound not found at {monster_scream_path}")
+                    continue
+
+                scream_sound = pygame.mixer.Sound(str(monster_scream_path))
+                scream_sound.set_volume(self.sfx_volume)
+                self.monster_scream_sounds.append(scream_sound)
                 print(f"Loaded monster scream sound from {monster_scream_path}")
-            else:
-                print(f"Warning: Monster scream sound not found at {monster_scream_path}")
-                self.monster_scream_sound = None
         except Exception as e:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
             self.footstep_sound = None
             self.monster_appearing_sound = None
-            self.monster_scream_sound = None
+            self.monster_scream_sounds = []
 
     def play_ambient_loop(self) -> None:
         """Play ambient sound in a loop using pygame.mixer.music"""
@@ -146,8 +152,8 @@ class AudioManager:
             self.footstep_sound.set_volume(self.sfx_volume)
         if self.monster_appearing_sound is not None:
             self.monster_appearing_sound.set_volume(self.sfx_volume)
-        if self.monster_scream_sound is not None:
-            self.monster_scream_sound.set_volume(self.sfx_volume)
+        for scream_sound in self.monster_scream_sounds:
+            scream_sound.set_volume(self.sfx_volume)
 
     def stop_ambient(self) -> None:
         """Stop the ambient sound"""
@@ -223,7 +229,7 @@ class AudioManager:
             return False
 
     def play_monster_scream(self, current_time: float) -> bool:
-        if not self.available or self.monster_scream_sound is None:
+        if not self.available or not self.monster_scream_sounds:
             return False
         if not can_play_after_cooldown(
             self.last_monster_scream_at,
@@ -242,9 +248,16 @@ class AudioManager:
                 print("Warning: Could not find available audio channel for monster scream")
                 return False
 
+            scream_index = random.randrange(len(self.monster_scream_sounds))
+            if len(self.monster_scream_sounds) > 1 and scream_index == self._last_monster_scream_index:
+                # Keep scream selection varied while remaining random.
+                available_indices = [i for i in range(len(self.monster_scream_sounds)) if i != self._last_monster_scream_index]
+                scream_index = random.choice(available_indices)
+
             channel.set_volume(self.sfx_volume)
-            channel.play(self.monster_scream_sound)
+            channel.play(self.monster_scream_sounds[scream_index])
             self.monster_scream_channel = channel
+            self._last_monster_scream_index = scream_index
             self.last_monster_scream_at = current_time
             return True
         except Exception as e:

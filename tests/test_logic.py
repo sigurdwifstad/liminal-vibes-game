@@ -106,10 +106,23 @@ class TestCoreLogic(unittest.TestCase):
     @patch("audio.pygame.mixer.init")
     def test_audio_manager_play_monster_scream(self, _mock_init):
         manager = AudioManager()
-        manager.monster_scream_sound = object()
+        manager.monster_scream_sounds = [object()]
         self.assertTrue(manager.play_monster_scream(10.0))
         self.assertFalse(manager.play_monster_scream(11.0))
         self.assertTrue(manager.play_monster_scream(13.0))
+
+    @patch("audio.pygame.mixer.init")
+    @patch("audio.random.choice", return_value=1)
+    @patch("audio.random.randrange", side_effect=[0, 0])
+    def test_audio_manager_monster_scream_randomly_varies_choice(self, _mock_randrange, _mock_choice, _mock_init):
+        manager = AudioManager()
+        manager.monster_scream_sounds = [object(), object(), object()]
+
+        self.assertTrue(manager.play_monster_scream(10.0))
+        self.assertEqual(manager._last_monster_scream_index, 0)
+
+        self.assertTrue(manager.play_monster_scream(13.0))
+        self.assertEqual(manager._last_monster_scream_index, 1)
 
     def test_reach_factor_scream_threshold_behavior(self):
         threshold = 0.62
