@@ -234,11 +234,17 @@ class MazeManager:
     def _append_exit_door_entities(self, x: float, z: float, wall_height: float) -> None:
         # Create a door tile with custom door texture
         # Door is rectangular (tall, not a full wall patch)
+        # Keep slab orientation parallel to the boundary wall direction.
+        if abs(self.exit_direction[0]) == 1:
+            door_scale = Vec3(self.cell_size * 0.1, wall_height * 0.9, self.cell_size * 0.5)
+        else:
+            door_scale = Vec3(self.cell_size * 0.5, wall_height * 0.9, self.cell_size * 0.1)
+
         self.entities.append(
             Entity(
                 model="cube",
                 position=Vec3(x, wall_height * 0.5, z),
-                scale=Vec3(self.cell_size * 0.5, wall_height * 0.9, self.cell_size * 0.1),
+                scale=door_scale,
                 color=color.rgb(255, 255, 255),
                 texture=self.door_texture,
                 texture_scale=(1.0, 1.2),
@@ -347,28 +353,21 @@ class MazeManager:
         return rng.choice(candidates)
 
     def player_reached_exit(self, player_position: Vec3) -> bool:
-        # Check if player is at the exit location
-        # The exit door is placed at exit_wall_cell
-
-        # Method 1: Check if player is in or very close to exit_cell
+        # Only allow exit when the player is in the exit corridor cell and close to
+        # the doorway contact point on the boundary between exit cell and door wall.
         player_cell = self.cell_from_world(player_position)
-        if player_cell == self.exit_cell:
-            return True
+        if player_cell != self.exit_cell:
+            return False
 
-        # Check if player is in a neighboring cell to exit_cell
-        ex, ez = self.exit_cell
-        if abs(player_cell[0] - ex) <= 1 and abs(player_cell[1] - ez) <= 1:
-            # Player is in a neighboring cell, check world distance to door
-            door_center_wx, door_center_wz = self.world_from_cell(self.exit_cell)
-            dx = player_position.x - door_center_wx
-            dz = player_position.z - door_center_wz
-            distance = (dx * dx + dz * dz) ** 0.5
+        exit_wx, exit_wz = self.world_from_cell(self.exit_cell)
+        touch_x = exit_wx + self.exit_direction[0] * (self.cell_size * 0.5)
+        touch_z = exit_wz + self.exit_direction[1] * (self.cell_size * 0.5)
 
-            # If within 2.5 units (more than half a cell), player has reached the exit
-            if distance < 2.5:
-                return True
+        dx = player_position.x - touch_x
+        dz = player_position.z - touch_z
+        distance = (dx * dx + dz * dz) ** 0.5
 
-        return False
+        return distance <= 0.85
 
     def has_clear_line(self, a: Cell, b: Cell) -> bool:
         ax, az = a

@@ -5,7 +5,7 @@ A first-person 3D liminal horror prototype built with Python + Ursina.
 ## Features
 - Finite maze levels that grow larger each time you reach the exit door in the wall.
 - Procedural textures on walls, floor, and ceiling for subtle surface detail.
-- First-person movement (`WASD`) and camera look with arrow keys.
+- First-person movement (`WASD`) and camera look with both arrow keys and mouse/touchpad.
 - Sprint with `Shift` plus stamina depletion/refill bar.
 - Monster spawns after exploration time, then chases player.
 - Monster starts slower, ramps speed in stepped phases with an upper cap.
@@ -35,7 +35,8 @@ python main.py --test
 
 ## Controls
 - Move: `WASD`
-- Look: Arrow keys
+- Look: Arrow keys + mouse/touchpad
+- FOV adjust: `Q` / `E`
 - Sprint: Hold `Shift`
 - Restart after death: `R`
 

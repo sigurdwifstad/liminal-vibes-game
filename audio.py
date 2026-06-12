@@ -30,13 +30,17 @@ class AudioManager:
             self.ambient_sound = None
             self.footstep_sound = None
             self.monster_appearing_sound = None
+            self.monster_scream_sound = None
             self.ambient_channel = None
             self.footstep_channel = None
             self.monster_appearing_channel = None
+            self.monster_scream_channel = None
             self.ambient_playing = False
             self.footstep_playing = False
             self.monster_appearing_cooldown_seconds = 30.0
             self.last_monster_appearing_at = None
+            self.monster_scream_cooldown_seconds = 2.8
+            self.last_monster_scream_at = None
             return
 
         self.available = True
@@ -54,8 +58,12 @@ class AudioManager:
 
         self.monster_appearing_channel = None
         self.monster_appearing_sound = None
+        self.monster_scream_channel = None
+        self.monster_scream_sound = None
         self.monster_appearing_cooldown_seconds = 30.0
         self.last_monster_appearing_at: Optional[float] = None
+        self.monster_scream_cooldown_seconds = 2.8
+        self.last_monster_scream_at: Optional[float] = None
 
         self._load_sounds()
 
@@ -90,11 +98,21 @@ class AudioManager:
             else:
                 print(f"Warning: Monster appearing sound not found at {monster_appearing_path}")
                 self.monster_appearing_sound = None
+
+            monster_scream_path = self.resources_path / "monster_scream.mp3"
+            if monster_scream_path.exists():
+                self.monster_scream_sound = pygame.mixer.Sound(str(monster_scream_path))
+                self.monster_scream_sound.set_volume(self.sfx_volume)
+                print(f"Loaded monster scream sound from {monster_scream_path}")
+            else:
+                print(f"Warning: Monster scream sound not found at {monster_scream_path}")
+                self.monster_scream_sound = None
         except Exception as e:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
             self.footstep_sound = None
             self.monster_appearing_sound = None
+            self.monster_scream_sound = None
 
     def play_ambient_loop(self) -> None:
         """Play ambient sound in a loop using pygame.mixer.music"""
@@ -128,6 +146,8 @@ class AudioManager:
             self.footstep_sound.set_volume(self.sfx_volume)
         if self.monster_appearing_sound is not None:
             self.monster_appearing_sound.set_volume(self.sfx_volume)
+        if self.monster_scream_sound is not None:
+            self.monster_scream_sound.set_volume(self.sfx_volume)
 
     def stop_ambient(self) -> None:
         """Stop the ambient sound"""
@@ -200,6 +220,35 @@ class AudioManager:
             return True
         except Exception as e:
             print(f"Warning: Failed to play monster appearing sound: {e}")
+            return False
+
+    def play_monster_scream(self, current_time: float) -> bool:
+        if not self.available or self.monster_scream_sound is None:
+            return False
+        if not can_play_after_cooldown(
+            self.last_monster_scream_at,
+            current_time,
+            self.monster_scream_cooldown_seconds,
+        ):
+            return False
+
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+
+            if channel is None:
+                print("Warning: Could not find available audio channel for monster scream")
+                return False
+
+            channel.set_volume(self.sfx_volume)
+            channel.play(self.monster_scream_sound)
+            self.monster_scream_channel = channel
+            self.last_monster_scream_at = current_time
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play monster scream sound: {e}")
             return False
 
     def cleanup(self) -> None:

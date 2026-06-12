@@ -13,10 +13,10 @@ from monster import MonsterController
 from player import PlayerController
 
 
-_ACTIVE_GAME: LiminalSpacesGame | None = None
+_ACTIVE_GAME: LiminalVibesGame | None = None
 
 
-class LiminalSpacesGame:
+class LiminalVibesGame:
     def __init__(self, test: bool = False):
         self.test = test
         self.level = 1
@@ -26,8 +26,12 @@ class LiminalSpacesGame:
         self.ui = GameStateUI()
         self.audio = get_audio_manager()
 
-        self.stamina_bg = Entity(parent=camera.ui, model="quad", position=Vec3(-0.78, -0.45, 0), scale=Vec3(0.34, 0.03, 1), color=color.rgba(18, 18, 18, 180), origin=(-0.5, 0.5))
-        self.stamina_fill = Entity(parent=self.stamina_bg, model="quad", position=Vec3(-0.5, 0.0, -0.001), scale=Vec3(1.0, 0.8, 1), color=color.rgb(110, 210, 120), origin=(-0.5, 0.5))
+        self._stamina_bar_x = -0.78
+        self._stamina_bar_y = -0.45
+        self._stamina_bar_w = 0.34
+        self._stamina_bar_h = 0.03
+        self.stamina_bg = Entity(parent=camera.ui, model="quad", position=Vec3(self._stamina_bar_x, self._stamina_bar_y, 0), scale=Vec3(self._stamina_bar_w, self._stamina_bar_h, 1), color=color.rgba(18, 18, 18, 180), origin=(-0.5, 0.5))
+        self.stamina_fill = Entity(parent=camera.ui, model="quad", position=Vec3(self._stamina_bar_x, self._stamina_bar_y, -0.001), scale=Vec3(self._stamina_bar_w, self._stamina_bar_h * 0.82, 1), color=color.rgb(110, 210, 120), origin=(-0.5, 0.5))
         self.stamina_label = Text(parent=camera.ui, text="STAMINA", position=(-0.94, -0.44), scale=0.9, color=color.rgb(240, 240, 235))
 
         self.test_hud = Text(
@@ -116,6 +120,7 @@ class LiminalSpacesGame:
                 self.ui.run.survival_seconds,
                 self.player.forward,
                 can_catch_player=not self.test,
+                level=self.level,
             )
             if caught:
                 self.player.set_active(False)
@@ -133,8 +138,10 @@ class LiminalSpacesGame:
         self.stamina_label.enabled = is_running
 
         ratio = self.player.stamina_ratio
-        self.stamina_fill.scale_x = max(0.01, ratio)
-        if ratio > 0.55:
+        self.stamina_fill.scale_x = self._stamina_bar_w * max(0.001, ratio)
+        if self.player.exhausted:
+            self.stamina_fill.color = color.rgb(210, 55, 55)
+        elif ratio > 0.55:
             self.stamina_fill.color = color.rgb(110, 210, 120)
         elif ratio > 0.25:
             self.stamina_fill.color = color.rgb(220, 190, 90)
@@ -178,14 +185,14 @@ def input(key: str) -> None:
 
 
 def main(test: bool = False) -> None:
-    app = Ursina(borderless=False)
+    app = Ursina(borderless=False, fullscreen=True)
     window.title = "Liminal Spaces"
     window.color = color.rgb(130, 130, 115)
     window.exit_button.visible = True
     window.fps_counter.enabled = True
 
     global _ACTIVE_GAME
-    _ACTIVE_GAME = LiminalSpacesGame(test=test)
+    _ACTIVE_GAME = LiminalVibesGame(test=test)
 
     app.run()
 

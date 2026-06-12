@@ -3,12 +3,12 @@ from __future__ import annotations
 import heapq
 import math
 import random
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from ursina import Entity, Vec3, color, destroy, time
 
 from audio import get_audio_manager
-from core_logic import phased_speed
+from core_logic import monster_arm_reach_factor
 from maze import Cell, MazeManager
 
 
@@ -24,15 +24,8 @@ class MonsterController(Entity):
         self.path_refresh_timer = 0.0
         self.path_refresh_interval = 0.45
         self.catch_distance = 1.2
-        self.max_speed = 7.6
-        self.speed_phases: List[Tuple[float, float]] = [
-            (0.0, 2.7),
-            (45.0, 3.3),
-            (95.0, 4.1),
-            (160.0, 5.1),
-            (240.0, 6.1),
-            (330.0, 7.1),
-        ]
+        self.max_speed = 8.0
+        self.level_speeds: List[float] = [2.0, 4.0, 6.0, 6.2]  # indexed by level-1, capped at last entry
         self.current_speed = 0.0
         self.would_catch_player = False
         self.walk_anim_phase = 0.0
@@ -45,8 +38,12 @@ class MonsterController(Entity):
         self.teleport_timer = 3.0
         self.teleport_cooldown = 3.2
         self.teleport_out_of_sight_chance = 0.38
+        self.arm_reach_start_distance = 2.6
+        self.arm_full_reach_distance = 1.0
+        self.arm_scream_threshold = 0.62
         self.audio = get_audio_manager()
         self._was_visible_to_player = False
+        self._was_reaching_close = False
         self._build_visual()
 
     def _build_visual(self) -> None:
@@ -56,22 +53,27 @@ class MonsterController(Entity):
         self.right_leg = Entity(parent=self, model="cube", position=Vec3(0.2, 0.55, 0), scale=Vec3(0.1, 1.1, 0.1), color=color.black)
         self.left_arm = Entity(parent=self, model="cube", position=Vec3(-0.38, 1.3, 0), scale=Vec3(0.09, 1.2, 0.09), color=color.black)
         self.right_arm = Entity(parent=self, model="cube", position=Vec3(0.38, 1.3, 0), scale=Vec3(0.09, 1.2, 0.09), color=color.black)
+        self.left_arm_default_position = Vec3(-0.38, 1.3, 0)
+        self.right_arm_default_position = Vec3(0.38, 1.3, 0)
+        self.left_arm_default_scale = Vec3(0.09, 1.2, 0.09)
+        self.right_arm_default_scale = Vec3(0.09, 1.2, 0.09)
         self.visual_parts = [body, head, self.left_leg, self.right_leg, self.left_arm, self.right_arm]
 
-    def _set_limb_swing(self, swing_degrees: float) -> None:
+    def _set_limb_pose(self, swing_degrees: float, reach_factor: float = 0.0) -> None:
         if self.left_leg is not None:
             self.left_leg.rotation_x = swing_degrees
         if self.right_leg is not None:
             self.right_leg.rotation_x = -swing_degrees
         if self.left_arm is not None:
-            self.left_arm.rotation_x = -swing_degrees * 0.7
+            swing_rotation = -swing_degrees * 0.7
+            self.left_arm.rotation_x = swing_rotation * (1.0 - reach_factor) + (-102.0 * reach_factor)
+            self.left_arm.position = self.left_arm_default_position + Vec3(0.1 * reach_factor, 0.06 * reach_factor, 0.36 * reach_factor)
+            self.left_arm.scale = self.left_arm_default_scale + Vec3(0.0, 0.22 * reach_factor, 0.0)
         if self.right_arm is not None:
-            self.right_arm.rotation_x = swing_degrees * 0.7
-
-    def _relax_limbs(self) -> None:
-        for limb in (self.left_leg, self.right_leg, self.left_arm, self.right_arm):
-            if limb is not None:
-                limb.rotation_x *= 0.78
+            swing_rotation = swing_degrees * 0.7
+            self.right_arm.rotation_x = swing_rotation * (1.0 - reach_factor) + (-102.0 * reach_factor)
+            self.right_arm.position = self.right_arm_default_position + Vec3(-0.1 * reach_factor, 0.06 * reach_factor, 0.36 * reach_factor)
+            self.right_arm.scale = self.right_arm_default_scale + Vec3(0.0, 0.22 * reach_factor, 0.0)
 
     def reset(self) -> None:
         self.spawned = False
@@ -85,7 +87,8 @@ class MonsterController(Entity):
         self.walk_anim_phase = 0.0
         self.teleport_timer = self.teleport_cooldown
         self._was_visible_to_player = False
-        self._set_limb_swing(0.0)
+        self._was_reaching_close = False
+        self._set_limb_pose(0.0, 0.0)
 
     def _is_visible_to_player(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, target_position: Vec3) -> bool:
         player_cell = maze.cell_from_world(player_position)
@@ -195,6 +198,7 @@ class MonsterController(Entity):
         run_elapsed: float,
         player_forward: Vec3 | None = None,
         can_catch_player: bool = True,
+        level: int = 1,
     ) -> bool:
         if not self.spawned and run_elapsed >= self.spawn_delay_seconds:
             self._rng.seed(maze.seed + int(run_elapsed * 1000.0))
@@ -214,8 +218,19 @@ class MonsterController(Entity):
 
         player_flat = Vec3(player_position.x, 0.0, player_position.z)
         distance_to_player = (player_flat - self.position).length()
+        reach_factor = monster_arm_reach_factor(
+            distance_to_player,
+            reach_start_distance=self.arm_reach_start_distance,
+            full_reach_distance=self.arm_full_reach_distance,
+        )
+        is_reaching_close = reach_factor >= self.arm_scream_threshold
+        if is_reaching_close and not self._was_reaching_close:
+            self.audio.play_monster_scream(run_elapsed)
+        self._was_reaching_close = is_reaching_close
+
         self.would_catch_player = distance_to_player <= self.catch_distance
         if can_catch_player and self.would_catch_player:
+            self._set_limb_pose(0.0, reach_factor)
             return True
 
         is_visible = self._is_visible_to_player(maze, player_position, player_forward, self.position)
@@ -251,8 +266,8 @@ class MonsterController(Entity):
 
         to_target = next_waypoint - self.position
         if to_target.length() > 0.03:
-            phase_elapsed = max(0.0, run_elapsed - self.spawned_at)
-            speed = phased_speed(phase_elapsed, self.speed_phases, self.max_speed)
+            idx = max(0, min(level - 1, len(self.level_speeds) - 1))
+            speed = self.level_speeds[idx]
             self.current_speed = speed
             step = min(speed * time.dt, to_target.length())
             direction = to_target.normalized()
@@ -260,9 +275,9 @@ class MonsterController(Entity):
             yaw = math.degrees(math.atan2(direction.x, direction.z))
             self.rotation_y = yaw
             self.walk_anim_phase += time.dt * (2.8 + speed * 1.25)
-            self._set_limb_swing(math.sin(self.walk_anim_phase) * 28.0)
+            self._set_limb_pose(math.sin(self.walk_anim_phase) * 28.0, reach_factor)
         else:
             self.current_speed = 0.0
-            self._relax_limbs()
+            self._set_limb_pose(0.0, reach_factor)
 
         return False

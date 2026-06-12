@@ -16,3 +16,25 @@ def phased_speed(elapsed_since_spawn: float, phases: list[tuple[float, float]], 
         else:
             break
     return min(speed, max_speed)
+
+
+def clamp_fov(value: float, min_fov: float = 55.0, max_fov: float = 110.0) -> float:
+    return max(min_fov, min(max_fov, float(value)))
+
+
+def adjust_fov(current_fov: float, axis: float, delta_time: float, speed: float = 34.0, min_fov: float = 55.0, max_fov: float = 110.0) -> float:
+    next_fov = current_fov + axis * speed * max(0.0, delta_time)
+    return clamp_fov(next_fov, min_fov=min_fov, max_fov=max_fov)
+
+
+def monster_arm_reach_factor(distance_to_player: float, reach_start_distance: float = 2.6, full_reach_distance: float = 1.0) -> float:
+    if reach_start_distance <= full_reach_distance:
+        return 1.0 if distance_to_player <= full_reach_distance else 0.0
+    if distance_to_player >= reach_start_distance:
+        return 0.0
+    if distance_to_player <= full_reach_distance:
+        return 1.0
+
+    normalized = (reach_start_distance - distance_to_player) / (reach_start_distance - full_reach_distance)
+    return normalized * normalized * (3.0 - 2.0 * normalized)
+
