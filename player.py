@@ -29,6 +29,7 @@ class PlayerController(Entity):
         self.user_fov = self.default_fov
         self.pitch = 0.0
         self.cursor_locked = True
+        self._last_mouse_xy = (0.0, 0.0)
         self.enabled = True
         self.stamina_max = 5.0
         self.stamina = self.stamina_max
@@ -45,12 +46,14 @@ class PlayerController(Entity):
         camera.fov = self.default_fov
         mouse.locked = True
         mouse.visible = False
+        self._last_mouse_xy = self._xy_from_input(mouse.position)
 
     def set_active(self, active: bool) -> None:
         self.enabled = active
         self.cursor_locked = active
         mouse.locked = active
         mouse.visible = not active
+        self._last_mouse_xy = self._xy_from_input(mouse.position)
         if not active and self.audio.footstep_playing:
             self.audio.stop_footstep_loop()
         if active:
@@ -60,19 +63,36 @@ class PlayerController(Entity):
         if not self.enabled:
             return
 
-        yaw_input = held_keys["right arrow"] - held_keys["left arrow"]
-        pitch_input = held_keys["up arrow"] - held_keys["down arrow"]
-        fov_input = held_keys["e"] - held_keys["q"]
-        mouse_x, mouse_y = self._xy_from_input(mouse.velocity)
+        # Re-assert lock each frame; some platforms can drop lock after focus changes.
+        if self.cursor_locked and not mouse.locked:
+            mouse.locked = True
+            self._last_mouse_xy = self._xy_from_input(mouse.position)
 
-        self.rotation_y += yaw_input * self.look_speed * time.dt + mouse_x * self.mouse_look_speed
+        fov_input = held_keys["e"] - held_keys["q"]
+        if mouse.locked:
+            delta_x, delta_y = self._xy_from_input(getattr(mouse, "delta", (0.0, 0.0)))
+            vel_x, vel_y = self._xy_from_input(mouse.velocity)
+            if abs(delta_x) > 1e-9 or abs(delta_y) > 1e-9:
+                mouse_x, mouse_y = delta_x, delta_y
+            else:
+                mouse_x, mouse_y = vel_x, vel_y
+            self._last_mouse_xy = self._xy_from_input(mouse.position)
+        else:
+            pos_x, pos_y = self._xy_from_input(mouse.position)
+            last_x, last_y = self._last_mouse_xy
+            mouse_x, mouse_y = pos_x - last_x, pos_y - last_y
+            self._last_mouse_xy = (pos_x, pos_y)
+
+        self.rotation_y += mouse_x * self.mouse_look_speed
         mouse_pitch_dir = 1.0 if self.invert_y else -1.0
         self.pitch = clamp(
-            self.pitch + pitch_input * self.look_speed * time.dt + mouse_y * self.mouse_look_speed * mouse_pitch_dir,
+            self.pitch + mouse_y * self.mouse_look_speed * mouse_pitch_dir,
             -89,
             89,
         )
-        camera.rotation_x = self.pitch
+
+        camera.rotation = Vec3(self.pitch, 0, 0)
+
         self.user_fov = adjust_fov(
             self.user_fov,
             fov_input,

@@ -38,7 +38,7 @@ class MonsterController(Entity):
         self.teleport_timer = 3.0
         self.teleport_cooldown = 3.2
         self.teleport_out_of_sight_chance = 0.38
-        self.arm_reach_start_distance = 2.6
+        self.arm_reach_start_distance = 3.5
         self.arm_full_reach_distance = 1.0
         self.arm_scream_threshold = 0.62
         self.audio = get_audio_manager()
