@@ -49,7 +49,7 @@ except ModuleNotFoundError:
     )
 
 from audio import AudioManager, can_play_after_cooldown, clamp_volume
-from core_logic import adjust_fov, format_mmss, monster_arm_reach_factor, phased_speed
+from core_logic import adjust_fov, format_mmss, monster_arm_reach_factor, phased_speed, touches_exit_portal
 
 
 class TestCoreLogic(unittest.TestCase):
@@ -90,6 +90,60 @@ class TestCoreLogic(unittest.TestCase):
         mid = monster_arm_reach_factor(1.8)
         self.assertGreater(mid, 0.0)
         self.assertLess(mid, 1.0)
+
+    def test_touches_exit_portal_requires_near_wall_and_inside_frame_width(self):
+        self.assertTrue(
+            touches_exit_portal(
+                player_x=1.45,
+                player_z=0.2,
+                exit_x=0.0,
+                exit_z=0.0,
+                exit_direction=(1, 0),
+                cell_size=4.0,
+            )
+        )
+        self.assertFalse(
+            touches_exit_portal(
+                player_x=0.8,
+                player_z=0.0,
+                exit_x=0.0,
+                exit_z=0.0,
+                exit_direction=(1, 0),
+                cell_size=4.0,
+            )
+        )
+        self.assertFalse(
+            touches_exit_portal(
+                player_x=1.45,
+                player_z=1.3,
+                exit_x=0.0,
+                exit_z=0.0,
+                exit_direction=(1, 0),
+                cell_size=4.0,
+            )
+        )
+
+    def test_touches_exit_portal_handles_north_south_portals(self):
+        self.assertTrue(
+            touches_exit_portal(
+                player_x=-0.35,
+                player_z=-1.45,
+                exit_x=0.0,
+                exit_z=0.0,
+                exit_direction=(0, -1),
+                cell_size=4.0,
+            )
+        )
+        self.assertFalse(
+            touches_exit_portal(
+                player_x=1.3,
+                player_z=-1.45,
+                exit_x=0.0,
+                exit_z=0.0,
+                exit_direction=(0, -1),
+                cell_size=4.0,
+            )
+        )
 
     @patch("audio.pygame.mixer.init")
     def test_audio_manager_default_mix(self, _mock_init):

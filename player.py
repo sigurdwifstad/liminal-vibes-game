@@ -35,7 +35,7 @@ class PlayerController(Entity):
         self.stamina_drain_rate = 1.35
         self.stamina_refill_rate = 0.95
         self.sprinting = False
-        self.exhausted = False          # True from stamina=0 until fully refilled
+        self.exhausted = False  # True from stamina=0 until fully refilled
 
         self.audio = get_audio_manager()
 
@@ -159,4 +159,3 @@ class PlayerController(Entity):
             return
         if key == "p":
             self.mouse_look_speed = min(self.mouse_sensitivity_max, self.mouse_look_speed + self.mouse_sensitivity_step)
-

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from collections import deque
 from typing import Iterable, List, Set, Tuple
@@ -7,6 +8,8 @@ from typing import Iterable, List, Set, Tuple
 from panda3d.core import PNMImage, Texture as PandaTexture
 from ursina import Entity, Texture, Vec3, color, destroy
 from ursina.shaders import lit_with_shadows_shader
+
+from core_logic import touches_exit_portal
 
 Cell = Tuple[int, int]
 
@@ -26,6 +29,9 @@ class MazeManager:
         self.exit_cell: Cell = (0, 0)
         self.exit_wall_cell: Cell = (0, 0)
         self.exit_direction: Cell = (1, 0)
+        self.wall_height = 3.0
+        self.exit_portal_height = 2.0
+        self.exit_portal_width_ratio = 1.0 / 3.0
 
         self.wall_texture = self._build_wall_texture()
         self.floor_texture = self._build_floor_texture()
@@ -46,6 +52,15 @@ class MazeManager:
         return lx - self.half_grid, lz - self.half_grid
 
     def _build_wall_texture(self) -> Texture:
+        img = self._build_wall_surface_image()
+
+        panda_tex = PandaTexture("liminal_wall")
+        panda_tex.load(img)
+        texture = Texture(panda_tex)
+        texture.filtering = "bilinear"
+        return texture
+
+    def _build_wall_surface_image(self) -> PNMImage:
         size = 128
         img = PNMImage(size, size)
         rng = random.Random(f"{self.seed}|wall_texture")
@@ -59,12 +74,7 @@ class MazeManager:
                 blotch = 0.008 if (x // 9 + y // 11) % 13 == 0 else 0.0
                 shade = max(-0.06, min(0.06, grain - vertical_band + blotch + horizontal_wave))
                 img.setXel(x, y, base_r + shade, base_g + shade, base_b + shade)
-
-        panda_tex = PandaTexture("liminal_wall")
-        panda_tex.load(img)
-        texture = Texture(panda_tex)
-        texture.filtering = "bilinear"
-        return texture
+        return img
 
     def _build_floor_texture(self) -> Texture:
         size = 128
@@ -107,36 +117,52 @@ class MazeManager:
 
     def _build_door_texture(self) -> Texture:
         size = 128
-        img = PNMImage(size, size)
-
-        # White base for the door
-        base_r, base_g, base_b = 240 / 255.0, 240 / 255.0, 238 / 255.0
-
-        # Fill entire image with near-white
+        img = PNMImage(size, size, 4)
         for y in range(size):
             for x in range(size):
-                # Very subtle grain for realism
-                grain = random.Random(f"{self.seed}|door_texture|{x}|{y}").uniform(-0.015, 0.015)
-                color_val = base_r + grain
-                img.setXel(x, y, color_val, color_val, color_val)
+                img.setXel(x, y, 0.0, 0.0, 0.0)
+                img.setAlpha(x, y, 0.0)
 
-        # Draw a grey/dark circular doorknob in the right-middle area
-        center_x = int(size * 0.75)  # Right side
-        center_y = size // 2  # Middle height
-        knob_radius = 6
+        tape_rng = random.Random(f"{self.seed}|door_tape")
+        portal_width_px = max(22, int(size * self.exit_portal_width_ratio))
+        half_width = portal_width_px // 2
+        center_x = size // 2
+        left_center = center_x - half_width
+        right_center = center_x + half_width
+        top_y = max(18, min(size - 8, int(size * (self.exit_portal_height / self.wall_height))))
 
-        knob_r, knob_g, knob_b = 100 / 255.0, 100 / 255.0, 100 / 255.0
+        def paint_tape(px: int, py: int, alpha_scale: float = 1.0) -> None:
+            if not (0 <= px < size and 0 <= py < size):
+                return
+            shade = tape_rng.uniform(-0.07, 0.05)
+            blue_r = min(1.0, max(0.0, 38 / 255.0 + shade * 0.18))
+            blue_g = min(1.0, max(0.0, 135 / 255.0 + shade * 0.24))
+            blue_b = min(1.0, max(0.0, 1.0 + shade * 0.08))
+            alpha = min(1.0, max(0.0, 0.86 + shade * 0.22)) * alpha_scale
+            img.setXel(px, py, blue_r, blue_g, blue_b)
+            img.setAlpha(px, py, alpha)
 
-        for y in range(max(0, center_y - knob_radius), min(size, center_y + knob_radius + 1)):
-            for x in range(max(0, center_x - knob_radius), min(size, center_x + knob_radius + 1)):
-                dx = x - center_x
-                dy = y - center_y
-                dist = (dx * dx + dy * dy) ** 0.5
+        for py in range(0, top_y + 1):
+            left_shift = int(1.5 * math.sin(py * 0.12 + 0.3)) + tape_rng.randint(-1, 1)
+            right_shift = int(1.5 * math.sin(py * 0.11 + 1.7)) + tape_rng.randint(-1, 1)
+            left_width = 5 + (1 if (py // 11) % 2 == 0 else 0)
+            right_width = 4 + (1 if (py // 9) % 2 == 1 else 0)
 
-                if dist <= knob_radius:
-                    # Gradient for 3D effect
-                    shade = (knob_radius - dist) / knob_radius * 0.3
-                    img.setXel(x, y, knob_r - shade, knob_g - shade, knob_b - shade)
+            for px in range(left_center + left_shift - left_width, left_center + left_shift + left_width + 1):
+                if tape_rng.random() > 0.04:
+                    paint_tape(px, py, alpha_scale=0.92 if abs(px - (left_center + left_shift)) > left_width - 2 else 1.0)
+
+            for px in range(right_center + right_shift - right_width, right_center + right_shift + right_width + 1):
+                if tape_rng.random() > 0.05:
+                    paint_tape(px, py, alpha_scale=0.9 if abs(px - (right_center + right_shift)) > right_width - 1 else 1.0)
+
+        top_band_half = 4
+        for px in range(left_center - 2, right_center + 3):
+            top_curve = int(1.2 * math.sin(px * 0.09 + 0.8))
+            for py in range(top_y + top_curve - top_band_half, top_y + top_curve + top_band_half + 1):
+                if tape_rng.random() > 0.035:
+                    edge_alpha = 0.9 if abs(py - (top_y + top_curve)) >= top_band_half - 1 else 1.0
+                    paint_tape(px, py, alpha_scale=edge_alpha)
 
         panda_tex = PandaTexture("liminal_door")
         panda_tex.load(img)
@@ -232,29 +258,82 @@ class MazeManager:
         return min(distances, key=distances.get)
 
     def _append_exit_door_entities(self, x: float, z: float, wall_height: float) -> None:
-        # Create a door tile with custom door texture
-        # Door is rectangular (tall, not a full wall patch)
-        # Keep slab orientation parallel to the boundary wall direction.
-        if abs(self.exit_direction[0]) == 1:
-            door_scale = Vec3(self.cell_size * 0.1, wall_height * 0.9, self.cell_size * 0.5)
-        else:
-            door_scale = Vec3(self.cell_size * 0.5, wall_height * 0.9, self.cell_size * 0.1)
-
         self.entities.append(
             Entity(
                 model="cube",
                 position=Vec3(x, wall_height * 0.5, z),
-                scale=door_scale,
-                color=color.rgb(255, 255, 255),
-                texture=self.door_texture,
-                texture_scale=(1.0, 1.2),
+                scale=Vec3(self.cell_size, wall_height, self.cell_size),
+                color=color.rgb(214, 205, 170),
+                texture=self.wall_texture,
+                texture_scale=(1.0, 1.4),
                 collider="box",
                 shader=lit_with_shadows_shader,
             )
         )
 
+        tape_rng = random.Random(f"{self.seed}|exit_tape|{self.exit_wall_cell[0]}|{self.exit_wall_cell[1]}")
+        tape_color = color.rgb(48, 148, 255)
+        tape_depth = 0.035
+        wall_base_y = 0.0
+        tape_thickness = 0.095
+        top_thickness = 0.09
+        portal_width = self.cell_size * self.exit_portal_width_ratio
+        portal_left = -(self.cell_size / 6.0)
+        portal_right = self.cell_size / 6.0
+        portal_top_y = self.exit_portal_height
+
+        if self.exit_direction == (1, 0):
+            face_center = Vec3(x - (self.cell_size * 0.5) - (tape_depth * 0.5), wall_base_y, z)
+            lateral_axis = Vec3(0, 0, 1)
+        elif self.exit_direction == (-1, 0):
+            face_center = Vec3(x + (self.cell_size * 0.5) + (tape_depth * 0.5), wall_base_y, z)
+            lateral_axis = Vec3(0, 0, 1)
+        elif self.exit_direction == (0, 1):
+            face_center = Vec3(x, wall_base_y, z - (self.cell_size * 0.5) - (tape_depth * 0.5))
+            lateral_axis = Vec3(1, 0, 0)
+        else:
+            face_center = Vec3(x, wall_base_y, z + (self.cell_size * 0.5) + (tape_depth * 0.5))
+            lateral_axis = Vec3(1, 0, 0)
+
+        def add_tape_strip(center: Vec3, scale: Vec3, rotation_z: float = 0.0) -> None:
+            self.entities.append(
+                Entity(
+                    model="cube",
+                    position=center,
+                    scale=scale,
+                    rotation=Vec3(0, 0, rotation_z),
+                    color=tape_color,
+                    shader=lit_with_shadows_shader,
+                )
+            )
+
+        if abs(lateral_axis.x) > 0:
+            side_scale_left = Vec3(tape_thickness, self.exit_portal_height, tape_depth)
+            side_scale_right = Vec3(tape_thickness, self.exit_portal_height, tape_depth)
+            top_scale = Vec3(portal_width + tape_thickness, top_thickness, tape_depth)
+        else:
+            side_scale_left = Vec3(tape_depth, self.exit_portal_height, tape_thickness)
+            side_scale_right = Vec3(tape_depth, self.exit_portal_height, tape_thickness)
+            top_scale = Vec3(tape_depth, top_thickness, portal_width + tape_thickness)
+
+        add_tape_strip(
+            face_center + lateral_axis * (portal_left + tape_rng.uniform(-0.02, 0.01)) + Vec3(0, self.exit_portal_height * 0.5, 0),
+            side_scale_left,
+            rotation_z=-1.2 + tape_rng.uniform(-0.4, 0.3),
+        )
+        add_tape_strip(
+            face_center + lateral_axis * (portal_right + tape_rng.uniform(-0.01, 0.02)) + Vec3(0, self.exit_portal_height * 0.5, 0),
+            side_scale_right,
+            rotation_z=1.0 + tape_rng.uniform(-0.3, 0.4),
+        )
+        add_tape_strip(
+            face_center + lateral_axis * tape_rng.uniform(-0.02, 0.02) + Vec3(0, portal_top_y, 0),
+            top_scale,
+            rotation_z=tape_rng.uniform(-0.35, 0.35),
+        )
+
     def _build_entities(self) -> None:
-        wall_height = 3.0
+        wall_height = self.wall_height
         surface_color = color.rgb(214, 205, 170)
 
         for lz in range(self.grid_size):
@@ -353,21 +432,21 @@ class MazeManager:
         return rng.choice(candidates)
 
     def player_reached_exit(self, player_position: Vec3) -> bool:
-        # Only allow exit when the player is in the exit corridor cell and close to
-        # the doorway contact point on the boundary between exit cell and door wall.
         player_cell = self.cell_from_world(player_position)
-        if player_cell != self.exit_cell:
+        if player_cell not in (self.exit_cell, self.exit_wall_cell):
             return False
 
         exit_wx, exit_wz = self.world_from_cell(self.exit_cell)
-        touch_x = exit_wx + self.exit_direction[0] * (self.cell_size * 0.5)
-        touch_z = exit_wz + self.exit_direction[1] * (self.cell_size * 0.5)
-
-        dx = player_position.x - touch_x
-        dz = player_position.z - touch_z
-        distance = (dx * dx + dz * dz) ** 0.5
-
-        return distance <= 0.85
+        return touches_exit_portal(
+            player_x=player_position.x,
+            player_z=player_position.z,
+            exit_x=exit_wx,
+            exit_z=exit_wz,
+            exit_direction=self.exit_direction,
+            cell_size=self.cell_size,
+            collider_radius=0.45,
+            portal_width_ratio=self.exit_portal_width_ratio,
+        )
 
     def has_clear_line(self, a: Cell, b: Cell) -> bool:
         ax, az = a

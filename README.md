@@ -1,4 +1,4 @@
-# Liminal Spaces
+# Liminal Vibes
 
 A first-person 3D liminal horror prototype built with Python + Ursina.
 
