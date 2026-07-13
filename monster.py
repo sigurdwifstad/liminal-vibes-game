@@ -49,6 +49,26 @@ class MonsterController(Entity):
     def _build_visual(self) -> None:
         body = Entity(parent=self, model="cube", position=Vec3(0, 1.2, 0), scale=Vec3(0.45, 1.6, 0.35), color=color.black)
         head = Entity(parent=self, model="cube", position=Vec3(0, 2.2, 0), scale=Vec3(0.36, 0.36, 0.36), color=color.black)
+
+        # Front-only scary face: black mask, red eyes, jagged grin, and white fangs.
+        face_z = 0.54
+        front_z = 0.58
+        Entity(parent=head, model="cube", position=Vec3(0.0, 0.0, face_z), scale=Vec3(0.94, 0.94, 0.08), color=color.black)
+        Entity(parent=head, model="cube", position=Vec3(-0.22, 0.21, front_z), scale=Vec3(0.18, 0.16, 0.05), color=color.rgb(230, 0, 0))
+        Entity(parent=head, model="cube", position=Vec3(0.22, 0.21, front_z), scale=Vec3(0.18, 0.16, 0.05), color=color.rgb(230, 0, 0))
+        Entity(parent=head, model="cube", position=Vec3(-0.24, -0.22, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
+        Entity(parent=head, model="cube", position=Vec3(-0.12, -0.30, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
+        Entity(parent=head, model="cube", position=Vec3(0.0, -0.34, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
+        Entity(parent=head, model="cube", position=Vec3(0.12, -0.30, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
+        Entity(parent=head, model="cube", position=Vec3(0.24, -0.22, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
+        Entity(parent=head, model="cube", position=Vec3(-0.12, -0.36, 0.6), scale=Vec3(0.06, 0.16, 0.05), color=color.white)
+        Entity(parent=head, model="cube", position=Vec3(-0.24, -0.34, 0.6), scale=Vec3(0.05, 0.14, 0.05), color=color.white)
+        Entity(parent=head, model="cube", position=Vec3(-0.06, -0.38, 0.6), scale=Vec3(0.05, 0.16, 0.05), color=color.white)
+        Entity(parent=head, model="cube", position=Vec3(0.0, -0.39, 0.6), scale=Vec3(0.06, 0.18, 0.05), color=color.white)
+        Entity(parent=head, model="cube", position=Vec3(0.06, -0.38, 0.6), scale=Vec3(0.05, 0.16, 0.05), color=color.white)
+        Entity(parent=head, model="cube", position=Vec3(0.12, -0.36, 0.6), scale=Vec3(0.06, 0.16, 0.05), color=color.white)
+        Entity(parent=head, model="cube", position=Vec3(0.24, -0.34, 0.6), scale=Vec3(0.05, 0.14, 0.05), color=color.white)
+
         self.left_leg = Entity(parent=self, model="cube", position=Vec3(-0.2, 0.55, 0), scale=Vec3(0.1, 1.1, 0.1), color=color.black)
         self.right_leg = Entity(parent=self, model="cube", position=Vec3(0.2, 0.55, 0), scale=Vec3(0.1, 1.1, 0.1), color=color.black)
         self.left_arm = Entity(parent=self, model="cube", position=Vec3(-0.38, 1.3, 0), scale=Vec3(0.09, 1.2, 0.09), color=color.black)
