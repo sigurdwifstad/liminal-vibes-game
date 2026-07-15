@@ -105,10 +105,11 @@ class LiminalVibesGame:
     def _show_death_closeup(self) -> None:
         if self.monster is None:
             return
-        focus = self.monster.world_position + Vec3(0, 1.8, 0)
+        focus = self.monster.world_position + Vec3(0, 2.0, 0)
         camera.parent = scene
         camera.position = focus + self.monster.forward * 0.95 + Vec3(0, 0.06, 0)
         camera.look_at(focus)
+        camera.rotation = Vec3(camera.rotation_x, camera.rotation_y, 0)
 
     def start_new_run(self) -> None:
         self.level = 1
