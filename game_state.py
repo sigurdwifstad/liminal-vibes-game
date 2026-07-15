@@ -3,7 +3,7 @@ from __future__ import annotations
 import time as pytime
 from dataclasses import dataclass
 
-from ursina import Entity, Text, color, time
+from ursina import Entity, Text, Vec3, camera, color, time
 
 from core_logic import format_mmss
 
@@ -56,11 +56,37 @@ class GameStateUI:
             color=color.rgb(230, 230, 230),
         )
 
+        self.loading_root = Entity(parent=camera.ui, enabled=False)
+        self.loading_backdrop = Entity(
+            parent=self.loading_root,
+            model="quad",
+            position=Vec3(0, 0, 0),
+            scale=Vec3(2.2, 1.3, 1),
+            color=color.rgba(8, 8, 8, 235),
+        )
+        self.loading_title = Text(
+            parent=self.loading_root,
+            text="LOADING NEXT LEVEL",
+            position=(0, 0.06),
+            origin=(0, 0),
+            scale=1.9,
+            color=color.rgb(245, 245, 238),
+        )
+        self.loading_hint = Text(
+            parent=self.loading_root,
+            text="Generating maze...",
+            position=(0, -0.03),
+            origin=(0, 0),
+            scale=1.1,
+            color=color.rgb(210, 210, 205),
+        )
+
     def start_new_run(self, level: int = 1) -> None:
         self.run.running = True
         self.run.start_time = pytime.time()
         self.run.end_time = 0.0
         self.run.level = level
+        self.loading_root.enabled = False
         self.game_over_root.enabled = False
         self.hud_time.enabled = True
         self.hud_level.enabled = True
@@ -85,8 +111,17 @@ class GameStateUI:
         self.hud_time.enabled = False
         self.hud_level.enabled = False
         self.level_banner.enabled = False
+        self.loading_root.enabled = False
         self.game_over_root.enabled = True
         self.game_over_time.text = f"Survived: {format_mmss(self.run.survival_seconds)}"
+
+    def show_loading(self, level: int) -> None:
+        self.loading_title.text = f"LOADING LEVEL {level}"
+        self.loading_hint.text = "Generating maze and preloading geometry..."
+        self.loading_root.enabled = True
+
+    def hide_loading(self) -> None:
+        self.loading_root.enabled = False
 
     def update(self) -> None:
         if self.run.running:

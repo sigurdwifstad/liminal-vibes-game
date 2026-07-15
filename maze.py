@@ -7,7 +7,6 @@ from typing import Iterable, List, Set, Tuple
 
 from panda3d.core import PNMImage, Texture as PandaTexture
 from ursina import Entity, Texture, Vec3, color, destroy
-from ursina.shaders import lit_with_shadows_shader
 
 from core_logic import touches_exit_portal
 
@@ -32,6 +31,8 @@ class MazeManager:
         self.wall_height = 3.0
         self.exit_portal_height = 2.0
         self.exit_portal_width_ratio = 1.0 / 3.0
+
+        self._inv_cell_size: float = 1.0 / cell_size
 
         self.wall_texture = self._build_wall_texture()
         self.floor_texture = self._build_floor_texture()
@@ -267,7 +268,6 @@ class MazeManager:
                 texture=self.wall_texture,
                 texture_scale=(1.0, 1.4),
                 collider="box",
-                shader=lit_with_shadows_shader,
             )
         )
 
@@ -303,7 +303,6 @@ class MazeManager:
                     scale=scale,
                     rotation=Vec3(0, 0, rotation_z),
                     color=tape_color,
-                    shader=lit_with_shadows_shader,
                 )
             )
 
@@ -335,41 +334,43 @@ class MazeManager:
     def _build_entities(self) -> None:
         wall_height = self.wall_height
         surface_color = color.rgb(214, 205, 170)
+        light_panel_color = color.rgb(255, 255, 240)
 
         for lz in range(self.grid_size):
             for lx in range(self.grid_size):
                 gx, gz = self._global_from_local(lx, lz)
                 x, z = self.world_from_cell((gx, gz))
+                is_walkable = (gx, gz) in self.walkable_cells
 
-                self.entities.append(
-                    Entity(
-                        model="cube",
-                        position=Vec3(x, 0.0, z),
-                        scale=Vec3(self.cell_size, 0.1, self.cell_size),
-                        color=surface_color,
-                        texture=self.floor_texture,
-                        texture_scale=(2.2, 2.2),
+                if is_walkable:
+                    # Floor and ceiling only needed for walkable (visible) cells.
+                    self.entities.append(
+                        Entity(
+                            model="cube",
+                            position=Vec3(x, 0.0, z),
+                            scale=Vec3(self.cell_size, 0.1, self.cell_size),
+                            color=surface_color,
+                            texture=self.floor_texture,
+                            texture_scale=(2.2, 2.2),
+                        )
                     )
-                )
-                self.entities.append(
-                    Entity(
-                        model="cube",
-                        position=Vec3(x, wall_height, z),
-                        scale=Vec3(self.cell_size, 0.1, self.cell_size),
-                        color=surface_color,
-                        texture=self.ceiling_texture,
-                        texture_scale=(1.9, 1.9),
+                    self.entities.append(
+                        Entity(
+                            model="cube",
+                            position=Vec3(x, wall_height, z),
+                            scale=Vec3(self.cell_size, 0.1, self.cell_size),
+                            color=surface_color,
+                            texture=self.ceiling_texture,
+                            texture_scale=(1.9, 1.9),
+                        )
                     )
-                )
-
-                if (gx, gz) in self.walkable_cells:
                     if (gx + gz) % 3 == 0:
                         self.entities.append(
                             Entity(
                                 model="cube",
                                 position=Vec3(x, wall_height - 0.07, z),
                                 scale=Vec3(self.cell_size * 0.72, 0.02, self.cell_size * 0.28),
-                                color=color.rgb(255, 255, 240),
+                                color=light_panel_color,
                             )
                         )
                 else:
@@ -385,7 +386,6 @@ class MazeManager:
                             texture=self.wall_texture,
                             texture_scale=(1.0, 1.4),
                             collider="box",
-                            shader=lit_with_shadows_shader,
                         )
                     )
 
@@ -411,8 +411,8 @@ class MazeManager:
         return gx * self.cell_size, gz * self.cell_size
 
     def cell_from_world(self, position: Vec3) -> Cell:
-        gx = round(position.x / self.cell_size)
-        gz = round(position.z / self.cell_size)
+        gx = round(position.x * self._inv_cell_size)
+        gz = round(position.z * self._inv_cell_size)
         return gx, gz
 
     def is_walkable_cell(self, cell: Cell) -> bool:
@@ -451,15 +451,19 @@ class MazeManager:
     def has_clear_line(self, a: Cell, b: Cell) -> bool:
         ax, az = a
         bx, bz = b
-        steps = max(abs(bx - ax), abs(bz - az))
+        dx = bx - ax
+        dz = bz - az
+        steps = max(abs(dx), abs(dz))
         if steps == 0:
             return True
-
-        for i in range(steps + 1):
-            t = i / steps
-            sx = round(ax + (bx - ax) * t)
-            sz = round(az + (bz - az) * t)
-            if (sx, sz) != a and (sx, sz) != b and (sx, sz) not in self.walkable_cells:
+        # Anything farther than 30 cells is completely hidden by fog – treat as blocked.
+        if steps > 30:
+            return False
+        # Check only intermediate cells (skip the two endpoints which may be wall-adjacent).
+        for i in range(1, steps):
+            sx = ax + round(dx * i / steps)
+            sz = az + round(dz * i / steps)
+            if (sx, sz) not in self.walkable_cells:
                 return False
         return True
 

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ursina import Entity, Vec3, camera, clamp, held_keys, mouse, raycast, time
 
 from audio import get_audio_manager
 from core_logic import adjust_fov
+
+if TYPE_CHECKING:
+    from maze import MazeManager
 
 
 class PlayerController(Entity):
@@ -36,6 +41,7 @@ class PlayerController(Entity):
         self.stamina_refill_rate = 0.95
         self.sprinting = False
         self.exhausted = False  # True from stamina=0 until fully refilled
+        self.current_maze: MazeManager | None = None
 
         self.audio = get_audio_manager()
 
@@ -55,6 +61,9 @@ class PlayerController(Entity):
             self.audio.stop_footstep_loop()
         if active:
             camera.fov = self.user_fov
+
+    def set_maze(self, maze: MazeManager | None) -> None:
+        self.current_maze = maze
 
     def update(self):
         if not self.enabled:
@@ -131,6 +140,13 @@ class PlayerController(Entity):
     def _try_move(self, delta: Vec3) -> None:
         if delta.length() <= 0:
             return
+
+        if self.current_maze is not None:
+            candidate = self.position + delta
+            if self._can_occupy(candidate):
+                self.position = candidate
+            return
+
         direction = delta.normalized()
         probe_origin = self.world_position + Vec3(0, 1.0, 0)
         hit = raycast(
@@ -141,6 +157,31 @@ class PlayerController(Entity):
         )
         if not hit.hit:
             self.position += delta
+
+    def _can_occupy(self, candidate_position: Vec3) -> bool:
+        maze = self.current_maze
+        if maze is None:
+            return True
+
+        # Sample center + perimeter points to approximate circular collider occupancy.
+        r = self.collider_radius * 0.92
+        diagonal = r * 0.7
+        probes = (
+            (0.0, 0.0),
+            (r, 0.0),
+            (-r, 0.0),
+            (0.0, r),
+            (0.0, -r),
+            (diagonal, diagonal),
+            (diagonal, -diagonal),
+            (-diagonal, diagonal),
+            (-diagonal, -diagonal),
+        )
+        for ox, oz in probes:
+            probe = Vec3(candidate_position.x + ox, 0.0, candidate_position.z + oz)
+            if not maze.is_walkable_cell(maze.cell_from_world(probe)):
+                return False
+        return True
 
     @staticmethod
     def _xy_from_input(value: object) -> tuple[float, float]:

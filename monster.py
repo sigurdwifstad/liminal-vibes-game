@@ -11,6 +11,9 @@ from audio import get_audio_manager
 from core_logic import monster_arm_reach_factor
 from maze import Cell, MazeManager
 
+# Precomputed constant – half-angle of the player's visible cone (52°).
+_VIS_CONE_COS: float = math.cos(math.radians(52.0))
+
 
 class MonsterController(Entity):
     def __init__(self, **kwargs):
@@ -23,6 +26,9 @@ class MonsterController(Entity):
         self.path_cells: List[Cell] = []
         self.path_refresh_timer = 0.0
         self.path_refresh_interval = 0.45
+        self.path_refresh_interval_near = 0.40
+        self.path_refresh_interval_mid = 0.65
+        self.path_refresh_interval_far = 0.90
         self.catch_distance = 1.2
         self.max_speed = 8.0
         self.level_speeds: List[float] = [2.0, 4.0, 6.0, 6.2]  # indexed by level-1, capped at last entry
@@ -100,7 +106,8 @@ class MonsterController(Entity):
         self.visible = False
         self.enabled = False
         self.path_cells.clear()
-        self.path_refresh_timer = 0.0
+        # Stagger path refreshes against other AI to reduce frame spikes.
+        self.path_refresh_timer = self.path_refresh_interval * 0.25
         self.position = Vec3(0, -1000, 0)
         self.current_speed = 0.0
         self.would_catch_player = False
@@ -126,7 +133,7 @@ class MonsterController(Entity):
 
         to_target_n = to_target.normalized()
         # Approximate player's visible cone to avoid obvious in-view spawns.
-        return forward.dot(to_target_n) >= math.cos(math.radians(52.0))
+        return forward.dot(to_target_n) >= _VIS_CONE_COS
 
     def _pick_hidden_cell(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, min_dist: int, max_dist: int) -> Cell | None:
         player_cell = maze.cell_from_world(player_position)
@@ -277,7 +284,13 @@ class MonsterController(Entity):
             player_cell = maze.cell_from_world(player_position)
             # Avoid loading/unloading large chunk rings every refresh; this can stall the frame loop.
             self.path_cells = self._astar(maze, monster_cell, player_cell)
-            self.path_refresh_timer = self.path_refresh_interval
+            cell_gap = abs(monster_cell[0] - player_cell[0]) + abs(monster_cell[1] - player_cell[1])
+            if cell_gap >= 18:
+                self.path_refresh_timer = self.path_refresh_interval_far
+            elif cell_gap >= 10:
+                self.path_refresh_timer = self.path_refresh_interval_mid
+            else:
+                self.path_refresh_timer = self.path_refresh_interval_near
 
         if len(self.path_cells) >= 2:
             next_waypoint = self._cell_to_waypoint(maze, self.path_cells[1])

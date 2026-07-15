@@ -9,6 +9,9 @@ from ursina import Entity, Vec3, color, destroy, time
 from audio import get_audio_manager
 from maze import Cell, MazeManager
 
+# Precomputed constant – half-angle of the player's visible cone (52°).
+_VIS_CONE_COS: float = math.cos(math.radians(52.0))
+
 
 class SpiderController(Entity):
     """A spider monster that drains player stamina and disappears instead of killing."""
@@ -23,6 +26,9 @@ class SpiderController(Entity):
         self.path_cells: List[Cell] = []
         self.path_refresh_timer = 0.0
         self.path_refresh_interval = 0.45
+        self.path_refresh_interval_near = 0.38
+        self.path_refresh_interval_mid = 0.60
+        self.path_refresh_interval_far = 0.82
         self.catch_distance = 0.8
         self.current_speed = 6.0
         self.would_catch_player = False
@@ -131,7 +137,8 @@ class SpiderController(Entity):
         self.enabled = False
         self.audio.stop_spider_walking_loop()
         self.path_cells.clear()
-        self.path_refresh_timer = 0.0
+        # Offset spider path refresh timing so both AI do not spike on the same frame.
+        self.path_refresh_timer = self.path_refresh_interval * 0.75
         self.position = Vec3(0, -1000, 0)
         self.current_speed = 0.0
         self.would_catch_player = False
@@ -159,7 +166,7 @@ class SpiderController(Entity):
             return True
 
         to_target_n = to_target.normalized()
-        return forward.dot(to_target_n) >= math.cos(math.radians(52.0))
+        return forward.dot(to_target_n) >= _VIS_CONE_COS
 
     def _pick_hidden_cell(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, min_dist: int, max_dist: int) -> Cell | None:
         """Pick a spawn cell hidden from player."""
@@ -335,7 +342,13 @@ class SpiderController(Entity):
             spider_cell = maze.cell_from_world(self.position)
             player_cell = maze.cell_from_world(player_position)
             self.path_cells = self._astar(maze, spider_cell, player_cell)
-            self.path_refresh_timer = self.path_refresh_interval
+            cell_gap = abs(spider_cell[0] - player_cell[0]) + abs(spider_cell[1] - player_cell[1])
+            if cell_gap >= 18:
+                self.path_refresh_timer = self.path_refresh_interval_far
+            elif cell_gap >= 10:
+                self.path_refresh_timer = self.path_refresh_interval_mid
+            else:
+                self.path_refresh_timer = self.path_refresh_interval_near
 
         if len(self.path_cells) >= 2:
             next_waypoint = self._cell_to_waypoint(maze, self.path_cells[1])

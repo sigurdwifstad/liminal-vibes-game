@@ -10,6 +10,7 @@ from core_logic import format_mmss
 from game_state import GameStateUI
 from maze import MazeManager
 from monster import MonsterController
+from spider_monster import SpiderController
 from player import PlayerController
 
 
@@ -23,8 +24,12 @@ class LiminalVibesGame:
         self.maze: MazeManager | None = None
         self.player: PlayerController | None = None
         self.monster: MonsterController | None = None
+        self.spider: SpiderController | None = None
+        self._spider_drained_this_encounter = False
         self.ui = GameStateUI()
         self.audio = get_audio_manager()
+
+        self._last_hud_color_key: str = ""   # throttle redundant stamina-bar color writes
 
         self._stamina_bar_x = -0.78
         self._stamina_bar_y = -0.45
@@ -60,11 +65,15 @@ class LiminalVibesGame:
         if self.maze is not None:
             self.maze.clear_all()
 
+        if self.spider is not None:
+            self.spider.cleanup()
+
         seed = self._random_seed()
         self.maze = MazeManager(seed=seed, level=self.level, cell_size=4.0, test=self.test)
 
         if self.player is None:
             self.player = PlayerController(position=Vec3(0, 0, 0))
+        self.player.set_maze(self.maze)
 
         self._restore_player_camera()
 
@@ -78,6 +87,12 @@ class LiminalVibesGame:
             self.monster = MonsterController(position=Vec3(0, -1000, 0))
         self.monster.spawn_delay_seconds = 0.0 if self.test else 40.0
         self.monster.reset()
+
+        if self.spider is None:
+            self.spider = SpiderController(position=Vec3(0, -1000, 0))
+        self.spider.spawn_delay_seconds = 0.0 if self.test else 40.0
+        self._spider_drained_this_encounter = False
+        self.spider.reset()
         self.ui.set_level(self.level)
 
     def _restore_player_camera(self) -> None:
@@ -109,7 +124,7 @@ class LiminalVibesGame:
     def update(self) -> None:
         self.ui.update()
         if self.ui.run.running:
-            assert self.player is not None and self.maze is not None and self.monster is not None
+            assert self.player is not None and self.maze is not None and self.monster is not None and self.spider is not None
             if self.maze.player_reached_exit(self.player.world_position):
                 self._advance_level()
                 return
@@ -126,7 +141,32 @@ class LiminalVibesGame:
                 self.player.set_active(False)
                 self._show_death_closeup()
                 self.ui.on_player_caught()
+
+            spider_drains = self.spider.update_spider(
+                self.maze,
+                self.player.world_position,
+                self.ui.run.survival_seconds,
+                self.player.forward,
+                level=self.level,
+            )
+            if spider_drains and not self._spider_drained_this_encounter:
+                self._spider_drained_this_encounter = True
+                self.player.stamina = 0.0
+                self.player.exhausted = True
+                if not self.test:
+                    self.player.set_active(False)
+                    self.ui.on_player_caught()
+            elif not spider_drains:
+                self._spider_drained_this_encounter = False
         self._update_hud()
+
+    # Precomputed stamina bar colors – avoids allocating new color objects every frame.
+    _STAMINA_COLORS = {
+        "exhausted": color.rgb(210, 55, 55),
+        "green":     color.rgb(110, 210, 120),
+        "yellow":    color.rgb(220, 190, 90),
+        "red":       color.rgb(225, 95, 85),
+    }
 
     def _update_hud(self) -> None:
         if self.player is None or self.monster is None:
@@ -139,14 +179,20 @@ class LiminalVibesGame:
 
         ratio = self.player.stamina_ratio
         self.stamina_fill.scale_x = self._stamina_bar_w * max(0.001, ratio)
+
+        # Only assign a new color when the bracket changes to avoid per-frame GPU state writes.
         if self.player.exhausted:
-            self.stamina_fill.color = color.rgb(210, 55, 55)
+            color_key = "exhausted"
         elif ratio > 0.55:
-            self.stamina_fill.color = color.rgb(110, 210, 120)
+            color_key = "green"
         elif ratio > 0.25:
-            self.stamina_fill.color = color.rgb(220, 190, 90)
+            color_key = "yellow"
         else:
-            self.stamina_fill.color = color.rgb(225, 95, 85)
+            color_key = "red"
+
+        if color_key != self._last_hud_color_key:
+            self.stamina_fill.color = self._STAMINA_COLORS[color_key]
+            self._last_hud_color_key = color_key
 
         if self.test:
             self.test_hud.enabled = True

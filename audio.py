@@ -32,17 +32,24 @@ class AudioManager:
             self.footstep_sound = None
             self.monster_appearing_sound = None
             self.monster_scream_sounds = []
+            self.spider_walking_sound = None
+            self.spider_attack_sound = None
             self.ambient_channel = None
             self.footstep_channel = None
             self.monster_appearing_channel = None
             self.monster_scream_channel = None
+            self.spider_walking_channel = None
+            self.spider_attack_channel = None
             self._last_monster_scream_index = None
             self.ambient_playing = False
             self.footstep_playing = False
+            self.spider_walking_playing = False
             self.monster_appearing_cooldown_seconds = 30.0
             self.last_monster_appearing_at = None
             self.monster_scream_cooldown_seconds = 2.8
             self.last_monster_scream_at = None
+            self.spider_attack_cooldown_seconds = 0.8
+            self.last_spider_attack_at = None
             return
 
         self.available = True
@@ -62,11 +69,18 @@ class AudioManager:
         self.monster_appearing_sound = None
         self.monster_scream_channel = None
         self.monster_scream_sounds = []
+        self.spider_walking_channel = None
+        self.spider_walking_sound = None
+        self.spider_walking_playing = False
+        self.spider_attack_channel = None
+        self.spider_attack_sound = None
         self._last_monster_scream_index: Optional[int] = None
         self.monster_appearing_cooldown_seconds = 30.0
         self.last_monster_appearing_at: Optional[float] = None
         self.monster_scream_cooldown_seconds = 2.8
         self.last_monster_scream_at: Optional[float] = None
+        self.spider_attack_cooldown_seconds = 0.8
+        self.last_spider_attack_at: Optional[float] = None
 
         self._load_sounds()
 
@@ -113,12 +127,32 @@ class AudioManager:
                 scream_sound.set_volume(self.sfx_volume)
                 self.monster_scream_sounds.append(scream_sound)
                 print(f"Loaded monster scream sound from {monster_scream_path}")
+
+            spider_walking_path = self.resources_path / "spider_walking.mp3"
+            if spider_walking_path.exists():
+                self.spider_walking_sound = pygame.mixer.Sound(str(spider_walking_path))
+                self.spider_walking_sound.set_volume(self.sfx_volume)
+                print(f"Loaded spider walking sound from {spider_walking_path}")
+            else:
+                print(f"Warning: Spider walking sound not found at {spider_walking_path}")
+                self.spider_walking_sound = None
+
+            spider_attack_path = self.resources_path / "spider_attack.mp3"
+            if spider_attack_path.exists():
+                self.spider_attack_sound = pygame.mixer.Sound(str(spider_attack_path))
+                self.spider_attack_sound.set_volume(self.sfx_volume)
+                print(f"Loaded spider attack sound from {spider_attack_path}")
+            else:
+                print(f"Warning: Spider attack sound not found at {spider_attack_path}")
+                self.spider_attack_sound = None
         except Exception as e:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
             self.footstep_sound = None
             self.monster_appearing_sound = None
             self.monster_scream_sounds = []
+            self.spider_walking_sound = None
+            self.spider_attack_sound = None
 
     def play_ambient_loop(self) -> None:
         """Play ambient sound in a loop using pygame.mixer.music"""
@@ -154,6 +188,10 @@ class AudioManager:
             self.monster_appearing_sound.set_volume(self.sfx_volume)
         for scream_sound in self.monster_scream_sounds:
             scream_sound.set_volume(self.sfx_volume)
+        if self.spider_walking_sound is not None:
+            self.spider_walking_sound.set_volume(self.sfx_volume)
+        if self.spider_attack_sound is not None:
+            self.spider_attack_sound.set_volume(self.sfx_volume)
 
     def stop_ambient(self) -> None:
         """Stop the ambient sound"""
@@ -197,6 +235,38 @@ class AudioManager:
                 self.footstep_playing = False
             except Exception as e:
                 print(f"Warning: Failed to stop footstep loop: {e}")
+
+    def play_spider_walking_loop(self) -> None:
+        """Start looping spider walking sounds without restarting when already active."""
+        if not self.available or self.spider_walking_sound is None:
+            return
+
+        if not self.spider_walking_playing:
+            try:
+                channel = pygame.mixer.find_channel()
+                if channel is None:
+                    pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                    channel = pygame.mixer.find_channel()
+
+                if channel is not None:
+                    channel.set_volume(self.sfx_volume)
+                    channel.play(self.spider_walking_sound, loops=-1)
+                    self.spider_walking_channel = channel
+                    self.spider_walking_playing = True
+                else:
+                    print("Warning: Could not find available audio channel for spider walking")
+            except Exception as e:
+                print(f"Warning: Failed to play spider walking loop: {e}")
+
+    def stop_spider_walking_loop(self) -> None:
+        """Stop looping spider walking sounds."""
+        if self.spider_walking_channel is not None:
+            try:
+                self.spider_walking_channel.stop()
+            except Exception as e:
+                print(f"Warning: Failed to stop spider walking loop: {e}")
+        self.spider_walking_playing = False
+        self.spider_walking_channel = None
 
     def play_monster_appearing(self, current_time: float) -> bool:
         """Play the monster-appearing stinger if its cooldown has elapsed."""
@@ -264,11 +334,42 @@ class AudioManager:
             print(f"Warning: Failed to play monster scream sound: {e}")
             return False
 
+    def play_spider_attack(self, current_time: float) -> bool:
+        """Play spider attack SFX with cooldown to avoid rapid retriggers."""
+        if not self.available or self.spider_attack_sound is None:
+            return False
+        if not can_play_after_cooldown(
+            self.last_spider_attack_at,
+            current_time,
+            self.spider_attack_cooldown_seconds,
+        ):
+            return False
+
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+
+            if channel is None:
+                print("Warning: Could not find available audio channel for spider attack")
+                return False
+
+            channel.set_volume(self.sfx_volume)
+            channel.play(self.spider_attack_sound)
+            self.spider_attack_channel = channel
+            self.last_spider_attack_at = current_time
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play spider attack sound: {e}")
+            return False
+
     def cleanup(self) -> None:
         """Clean up audio resources"""
         if self.available:
             self.stop_ambient()
             self.stop_footstep_loop()
+            self.stop_spider_walking_loop()
             try:
                 pygame.mixer.quit()
             except Exception:
