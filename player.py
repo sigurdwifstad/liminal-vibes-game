@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ursina import Entity, Vec3, camera, clamp, held_keys, mouse, raycast, time
+from ursina import Entity, Vec3, application, camera, clamp, held_keys, mouse, raycast, time
 
 from audio import get_audio_manager
 from core_logic import adjust_fov
@@ -20,11 +20,12 @@ class PlayerController(Entity):
         self.height = 1.7
         self.collider_radius = 0.45
         self.look_speed = 200.0
-        self.mouse_look_speed = 200.0
-        self.mouse_sensitivity_step = 10.0
-        self.mouse_sensitivity_min = 20.0
-        self.mouse_sensitivity_max = 220.0
-        self.invert_y = False
+        self.mouse_look_speed = 0.16
+        self.mouse_sensitivity_step = 0.02
+        self.mouse_sensitivity_min = 0.04
+        self.mouse_sensitivity_max = 0.60
+        self.mouse_deadzone_pixels = 0.5
+        self.invert_y = True
         self.fov_adjust_speed = 34.0
         self.fov_smooth_speed = 10.0
         self.sprint_fov_kick = 6.5
@@ -42,6 +43,9 @@ class PlayerController(Entity):
         self.sprinting = False
         self.exhausted = False  # True from stamina=0 until fully refilled
         self.current_maze: MazeManager | None = None
+        self._mouse_pointer_centered = False
+        self._mouse_bias_x = 0.0
+        self._mouse_bias_y = 0.0
 
         self.audio = get_audio_manager()
 
@@ -49,14 +53,19 @@ class PlayerController(Entity):
         camera.position = Vec3(0, self.height, 0)
         camera.rotation = (0, 0, 0)
         camera.fov = self.default_fov
-        mouse.locked = True
+        mouse.locked = False
         mouse.visible = False
 
     def set_active(self, active: bool) -> None:
         self.enabled = active
         self.cursor_locked = active
-        mouse.locked = active
+        mouse.locked = False
         mouse.visible = not active
+        self._mouse_pointer_centered = False
+        self._mouse_bias_x = 0.0
+        self._mouse_bias_y = 0.0
+        if active:
+            self._center_pointer()
         if not active and self.audio.footstep_playing:
             self.audio.stop_footstep_loop()
         if active:
@@ -72,7 +81,7 @@ class PlayerController(Entity):
         yaw_input = held_keys["right arrow"] - held_keys["left arrow"]
         pitch_input = held_keys["up arrow"] - held_keys["down arrow"]
         fov_input = held_keys["e"] - held_keys["q"]
-        mouse_x, mouse_y = self._xy_from_input(mouse.velocity)
+        mouse_x, mouse_y = self._mouse_delta_pixels()
 
         self.rotation_y += yaw_input * self.look_speed * time.dt + mouse_x * self.mouse_look_speed
         mouse_pitch_dir = 1.0 if self.invert_y else -1.0
@@ -187,9 +196,75 @@ class PlayerController(Entity):
     def _xy_from_input(value: object) -> tuple[float, float]:
         if hasattr(value, "x") and hasattr(value, "y"):
             return float(getattr(value, "x")), float(getattr(value, "y"))
+        if hasattr(value, "get_x") and hasattr(value, "get_y"):
+            return float(getattr(value, "get_x")()), float(getattr(value, "get_y")())
+        if hasattr(value, "getX") and hasattr(value, "getY"):
+            return float(getattr(value, "getX")()), float(getattr(value, "getY")())
         if isinstance(value, (tuple, list)) and len(value) >= 2:
             return float(value[0]), float(value[1])
         return 0.0, 0.0
+
+    def _get_window(self):
+        base = getattr(application, "base", None)
+        if base is None:
+            return None
+        return getattr(base, "win", None)
+
+    def _window_size(self) -> tuple[float, float]:
+        win = self._get_window()
+        if win is None:
+            return 0.0, 0.0
+        props = win.get_properties()
+        if hasattr(props, "get_x_size") and hasattr(props, "get_y_size"):
+            return float(props.get_x_size()), float(props.get_y_size())
+        if hasattr(props, "getXSize") and hasattr(props, "getYSize"):
+            return float(props.getXSize()), float(props.getYSize())
+        return 0.0, 0.0
+
+    def _center_pointer(self) -> None:
+        win = self._get_window()
+        width, height = self._window_size()
+        if win is None or width <= 0.0 or height <= 0.0:
+            return
+        win.move_pointer(0, int(width * 0.5), int(height * 0.5))
+        self._mouse_pointer_centered = True
+
+    def _mouse_delta_pixels(self) -> tuple[float, float]:
+        win = self._get_window()
+        if win is None:
+            return 0.0, 0.0
+
+        width, height = self._window_size()
+        if width <= 0.0 or height <= 0.0:
+            return 0.0, 0.0
+
+        center_x = width * 0.5
+        center_y = height * 0.5
+
+        if not self._mouse_pointer_centered:
+            self._center_pointer()
+            return 0.0, 0.0
+
+        pointer = win.get_pointer(0)
+        x, y = self._xy_from_input(pointer)
+        dx = x - center_x
+        dy = y - center_y
+
+        # Gradually cancel the small warp-feedback residue from the backend/window manager.
+        if abs(dx) <= self.mouse_deadzone_pixels and abs(dy) <= self.mouse_deadzone_pixels:
+            self._mouse_bias_x = self._mouse_bias_x * 0.9 + dx * 0.1
+            self._mouse_bias_y = self._mouse_bias_y * 0.9 + dy * 0.1
+
+        dx -= self._mouse_bias_x
+        dy -= self._mouse_bias_y
+
+        if abs(dx) < self.mouse_deadzone_pixels:
+            dx = 0.0
+        if abs(dy) < self.mouse_deadzone_pixels:
+            dy = 0.0
+
+        win.move_pointer(0, int(center_x), int(center_y))
+        return dx, dy
 
     def input(self, key: str) -> None:
         if key == "i":
