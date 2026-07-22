@@ -168,8 +168,20 @@ class SpiderController(Entity):
         to_target_n = to_target.normalized()
         return forward.dot(to_target_n) >= _VIS_CONE_COS
 
+    def _is_in_forward_hemisphere(self, player_position: Vec3, player_forward: Vec3 | None, target_position: Vec3) -> bool:
+        """Check if target is in front of the player (but not necessarily visible)."""
+        forward = Vec3(0, 0, 1)
+        if player_forward is not None and player_forward.length() > 0.001:
+            forward = Vec3(player_forward.x, 0, player_forward.z).normalized()
+
+        to_target = Vec3(target_position.x - player_position.x, 0, target_position.z - player_position.z)
+        if to_target.length() < 0.001:
+            return True
+
+        return forward.dot(to_target.normalized()) > 0.0
+
     def _pick_hidden_cell(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, min_dist: int, max_dist: int) -> Cell | None:
-        """Pick a spawn cell hidden from player."""
+        """Pick a spawn cell hidden from player and only in front of them."""
         player_cell = maze.cell_from_world(player_position)
         hidden: List[Cell] = []
         for cell in maze.walkable_cells:
@@ -177,15 +189,18 @@ class SpiderController(Entity):
             if dist < min_dist or dist > max_dist:
                 continue
             wx, wz = maze.world_from_cell(cell)
-            if not self._is_visible_to_player(maze, player_position, player_forward, Vec3(wx, 0, wz)):
+            target_position = Vec3(wx, 0, wz)
+            if self._is_in_forward_hemisphere(player_position, player_forward, target_position) and not self._is_visible_to_player(maze, player_position, player_forward, target_position):
                 hidden.append(cell)
 
         if hidden:
             return self._rng.choice(hidden)
 
+        # If no forward-hidden cells exist, fall back to any hidden cell so the spider can still spawn.
         for cell in maze.walkable_cells:
             wx, wz = maze.world_from_cell(cell)
-            if not self._is_visible_to_player(maze, player_position, player_forward, Vec3(wx, 0, wz)):
+            target_position = Vec3(wx, 0, wz)
+            if not self._is_visible_to_player(maze, player_position, player_forward, target_position):
                 hidden.append(cell)
         if hidden:
             return self._rng.choice(hidden)

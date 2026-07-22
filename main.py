@@ -66,7 +66,7 @@ class LiminalVibesGame:
             self.maze.clear_all()
 
         if self.spider is not None:
-            self.spider.cleanup()
+            self.spider.reset()
 
         seed = self._random_seed()
         self.maze = MazeManager(seed=seed, level=self.level, cell_size=4.0, test=self.test)
@@ -142,6 +142,7 @@ class LiminalVibesGame:
                 self.player.set_active(False)
                 self._show_death_closeup()
                 self.ui.on_player_caught()
+                return
 
             spider_drains = self.spider.update_spider(
                 self.maze,
@@ -157,6 +158,7 @@ class LiminalVibesGame:
                 if not self.test:
                     self.player.set_active(False)
                     self.ui.on_player_caught()
+                return
             elif not spider_drains:
                 self._spider_drained_this_encounter = False
         self._update_hud()
