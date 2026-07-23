@@ -18,9 +18,11 @@ _ACTIVE_GAME: LiminalVibesGame | None = None
 
 
 class LiminalVibesGame:
-    def __init__(self, test: bool = False):
+    def __init__(self, test: bool = False, test_level_5_only: bool = False, start_level: int = 1):
         self.test = test
-        self.level = 1
+        self.test_level_5_only = test_level_5_only
+        self.start_level = max(1, int(start_level))
+        self.level = self.start_level
         self.maze: MazeManager | None = None
         self.player: PlayerController | None = None
         self.monster: MonsterController | None = None
@@ -61,6 +63,10 @@ class LiminalVibesGame:
     def _random_seed(self) -> int:
         return random.randint(1, 2_000_000_000)
 
+    def _is_test_mode_for_level(self, level: int | None = None) -> bool:
+        current_level = self.level if level is None else level
+        return self.test or (self.test_level_5_only and current_level == 5)
+
     def _load_level(self) -> None:
         if self.maze is not None:
             self.maze.clear_all()
@@ -75,25 +81,32 @@ class LiminalVibesGame:
             self.player = PlayerController(position=Vec3(0, 0, 0))
         self.player.set_maze(self.maze)
 
-        self._restore_player_camera()
-
         sx, sz = self.maze.world_from_cell(self.maze.start_cell)
         self.player.position = Vec3(sx, 0, sz)
-        self.player.rotation = Vec3(0, 0, 0)
+        self.player.rotation_y = self.maze.player_spawn_rotation_y
         self.player.pitch = 0
+        self._restore_player_camera()
         self.player.set_active(True)
 
         if self.monster is None:
             self.monster = MonsterController(position=Vec3(0, -1000, 0))
-        self.monster.spawn_delay_seconds = 0.0 if self.test else 40.0
         self.monster.reset()
+        if self.level == 5 and self.maze.monster_start_cell is not None:
+            self.monster.spawn_delay_seconds = float("inf")
+            mx, mz = self.maze.world_from_cell(self.maze.monster_start_cell)
+            self.monster.place_at(Vec3(mx, 0.0, mz))
+        else:
+            self.monster.spawn_delay_seconds = 0.0 if self.test else 40.0
 
         if self.spider is None:
             self.spider = SpiderController(position=Vec3(0, -1000, 0))
-        self.spider.spawn_delay_seconds = 0.0 if self.test else 40.0
         self._spider_drained_this_encounter = False
         self.spider.reset()
+        self.spider.spawn_delay_seconds = float("inf") if self.level == 5 else (0.0 if self.test else 40.0)
         self.ui.set_level(self.level)
+
+        if self.level == 5:
+            self.audio.play_intense_sequence()
 
     def _restore_player_camera(self) -> None:
         if self.player is None:
@@ -112,7 +125,7 @@ class LiminalVibesGame:
         camera.rotation = Vec3(camera.rotation_x, camera.rotation_y, 0)
 
     def start_new_run(self) -> None:
-        self.level = 1
+        self.level = self.start_level
         self.ui.start_new_run(level=self.level)
         self.audio.play_ambient_loop()
         self._load_level()
@@ -126,6 +139,7 @@ class LiminalVibesGame:
         self.ui.update()
         if self.ui.run.running:
             assert self.player is not None and self.maze is not None and self.monster is not None and self.spider is not None
+            level_test_mode = self._is_test_mode_for_level()
             if self.maze.player_reached_exit(self.player.world_position):
                 self._advance_level()
                 return
@@ -135,7 +149,7 @@ class LiminalVibesGame:
                 self.player.world_position,
                 self.ui.run.survival_seconds,
                 self.player.forward,
-                can_catch_player=not self.test,
+                can_catch_player=not level_test_mode,
                 level=self.level,
             )
             if caught:
@@ -144,23 +158,21 @@ class LiminalVibesGame:
                 self.ui.on_player_caught()
                 return
 
-            spider_drains = self.spider.update_spider(
-                self.maze,
-                self.player.world_position,
-                self.ui.run.survival_seconds,
-                self.player.forward,
-                level=self.level,
-            )
-            if spider_drains and not self._spider_drained_this_encounter:
-                self._spider_drained_this_encounter = True
-                self.player.stamina = 0.0
-                self.player.exhausted = True
-                if not self.test:
-                    self.player.set_active(False)
-                    self.ui.on_player_caught()
-                return
-            elif not spider_drains:
-                self._spider_drained_this_encounter = False
+            if self.level != 5:
+                spider_drains = self.spider.update_spider(
+                    self.maze,
+                    self.player.world_position,
+                    self.ui.run.survival_seconds,
+                    self.player.forward,
+                    level=self.level,
+                )
+                if spider_drains and not self._spider_drained_this_encounter:
+                    self._spider_drained_this_encounter = True
+                    self.player.stamina = 0.0
+                    self.player.exhausted = True
+                    return
+                elif not spider_drains:
+                    self._spider_drained_this_encounter = False
         self._update_hud()
 
     # Precomputed stamina bar colors – avoids allocating new color objects every frame.
@@ -197,7 +209,7 @@ class LiminalVibesGame:
             self.stamina_fill.color = self._STAMINA_COLORS[color_key]
             self._last_hud_color_key = color_key
 
-        if self.test:
+        if self._is_test_mode_for_level():
             self.test_hud.enabled = True
             would_kill = "YES" if self.monster.would_catch_player else "NO"
             fps = int(1.0 / max(0.0001, time.dt))
@@ -233,7 +245,7 @@ def input(key: str) -> None:
         _ACTIVE_GAME.input(key)
 
 
-def main(test: bool = False) -> None:
+def main(test: bool = False, test_level_5_only: bool = False, start_level: int = 1) -> None:
     app = Ursina(borderless=False, fullscreen=True)
     window.title = "Liminal Spaces"
     window.color = color.rgb(130, 130, 115)
@@ -241,17 +253,19 @@ def main(test: bool = False) -> None:
     window.fps_counter.enabled = True
 
     global _ACTIVE_GAME
-    _ACTIVE_GAME = LiminalVibesGame(test=test)
+    _ACTIVE_GAME = LiminalVibesGame(test=test, test_level_5_only=test_level_5_only, start_level=start_level)
 
     app.run()
 
 
-def run(test: bool = False) -> None:
-    main(test=test)
+def run(test: bool = False, test_level_5_only: bool = False, start_level: int = 1) -> None:
+    main(test=test, test_level_5_only=test_level_5_only, start_level=start_level)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Liminal Spaces")
     parser.add_argument("--test", action="store_true", help="Enable test mode with immediate monster spawn")
+    parser.add_argument("--test-level-5", action="store_true", help="Enable test mode only when level 5 is reached")
+    parser.add_argument("--start-level", type=int, default=1, help="Start a new run at the given level (for example: 5)")
     args = parser.parse_args()
-    main(test=args.test)
+    main(test=args.test, test_level_5_only=args.test_level_5, start_level=args.start_level)

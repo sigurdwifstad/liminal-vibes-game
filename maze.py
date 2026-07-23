@@ -28,6 +28,8 @@ class MazeManager:
         self.exit_cell: Cell = (0, 0)
         self.exit_wall_cell: Cell = (0, 0)
         self.exit_direction: Cell = (1, 0)
+        self.monster_start_cell: Cell | None = None
+        self.player_spawn_rotation_y: float = 0.0
         self.wall_height = 3.0
         self.exit_portal_height = 2.0
         self.exit_portal_width_ratio = 1.0 / 3.0
@@ -172,6 +174,18 @@ class MazeManager:
         return texture
 
     def _generate_walkable_cells(self) -> Set[Cell]:
+        if self.level == 5:
+            walkable: Set[Cell] = set()
+            for lz in range(1, self.grid_size - 1):
+                walkable.add(self._global_from_local(1, lz))
+            self.start_cell = self._global_from_local(1, 4)
+            self.monster_start_cell = self._global_from_local(1, 1)
+            self.player_spawn_rotation_y = 180.0
+            self.exit_cell = self._global_from_local(1, self.grid_size - 2)
+            self.exit_direction = (0, 1)
+            self.exit_wall_cell = (self.exit_cell[0], self.exit_cell[1] + 1)
+            return walkable
+
         grid = [[False for _ in range(self.grid_size)] for _ in range(self.grid_size)]
         rng = random.Random(f"{self.seed}|level|{self.level}")
         stack = [(1, 1)]
@@ -391,13 +405,16 @@ class MazeManager:
 
     def _generate_level(self) -> None:
         self.walkable_cells = self._generate_walkable_cells()
-        self.start_cell = self._global_from_local(1, 1)
-        self.exit_cell = self._pick_exit_anchor_cell(self.start_cell)
-        self.exit_direction = self._exit_dir_from_anchor(self.exit_cell)
-        self.exit_wall_cell = (
-            self.exit_cell[0] + self.exit_direction[0],
-            self.exit_cell[1] + self.exit_direction[1],
-        )
+        if self.level != 5:
+            self.start_cell = self._global_from_local(1, 1)
+            self.monster_start_cell = None
+            self.player_spawn_rotation_y = 0.0
+            self.exit_cell = self._pick_exit_anchor_cell(self.start_cell)
+            self.exit_direction = self._exit_dir_from_anchor(self.exit_cell)
+            self.exit_wall_cell = (
+                self.exit_cell[0] + self.exit_direction[0],
+                self.exit_cell[1] + self.exit_direction[1],
+            )
         self._build_entities()
 
     def clear_all(self) -> None:

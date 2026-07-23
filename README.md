@@ -12,6 +12,7 @@ A first-person 3D liminal horror prototype built with Python + Ursina.
 - Monster has simple procedural limb walk animation while moving.
 - Monster never spawns in your current line of sight.
 - When out of view, monster can occasionally teleport to another hidden location.
+- Level 5 becomes a one-way hallway challenge with the exit door at the far end.
 - On death: `GAME OVER` screen with survival time in `MM:SS`.
 - Every restart uses a new random seed.
 
@@ -31,6 +32,18 @@ An extra HUD appears with elapsed time, current monster speed, and whether the m
 
 ```bash
 python main.py --test
+```
+
+To enable test mode only when you reach level 5, use:
+
+```bash
+python main.py --test-level-5
+```
+
+To jump directly to a specific level (for example, the level 5 hallway), use:
+
+```bash
+python main.py --start-level 5
 ```
 
 ## Controls

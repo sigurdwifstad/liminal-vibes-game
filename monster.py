@@ -117,6 +117,21 @@ class MonsterController(Entity):
         self._was_reaching_close = False
         self._set_limb_pose(0.0, 0.0)
 
+    def place_at(self, position: Vec3, run_elapsed: float = 0.0) -> None:
+        self.position = position
+        self.spawned = True
+        self.visible = True
+        self.enabled = True
+        self.spawned_at = run_elapsed
+        self.would_catch_player = False
+        self.current_speed = 0.0
+        self.path_cells.clear()
+        self.path_refresh_timer = 0.0
+        self.teleport_timer = self.teleport_cooldown
+        self._was_visible_to_player = False
+        self._was_reaching_close = False
+        self._set_limb_pose(0.0, 0.0)
+
     def _is_visible_to_player(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, target_position: Vec3) -> bool:
         player_cell = maze.cell_from_world(player_position)
         target_cell = maze.cell_from_world(target_position)
@@ -265,7 +280,7 @@ class MonsterController(Entity):
             self.audio.play_monster_appearing(run_elapsed)
         self._was_visible_to_player = is_visible
 
-        if not is_visible:
+        if level != 5 and not is_visible:
             self.teleport_timer -= time.dt
             if self.teleport_timer <= 0.0 and self._rng.random() < self.teleport_out_of_sight_chance:
                 teleport_cell = self._pick_hidden_cell(maze, player_position, player_forward, min_dist=7, max_dist=26)
@@ -275,7 +290,7 @@ class MonsterController(Entity):
                     self.path_cells.clear()
             if self.teleport_timer <= 0.0:
                 self.teleport_timer = self.teleport_cooldown + self._rng.uniform(-0.8, 1.0)
-        else:
+        elif level != 5:
             self.teleport_timer = min(self.teleport_cooldown, self.teleport_timer + time.dt * 0.4)
 
         self.path_refresh_timer -= time.dt

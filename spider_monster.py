@@ -150,6 +150,10 @@ class SpiderController(Entity):
         self._drain_delay = 0.0
         self._set_leg_pose(0.0)
 
+    @property
+    def drain_complete(self) -> bool:
+        return self._drain_complete
+
     def _is_visible_to_player(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, target_position: Vec3) -> bool:
         """Check if spider is visible to player."""
         player_cell = maze.cell_from_world(player_position)
@@ -281,6 +285,10 @@ class SpiderController(Entity):
         """
         Update spider behavior. Returns True if spider caught the player (drained stamina).
         """
+        if level == 5:
+            self.audio.stop_spider_walking_loop()
+            return False
+
         # Only spawn at level 3+ (unless in test mode, indicated by spawn_delay_seconds = 0)
         if level < 3 and self.spawn_delay_seconds > 0:
             self.audio.stop_spider_walking_loop()

@@ -34,12 +34,14 @@ class AudioManager:
             self.monster_scream_sounds = []
             self.spider_walking_sound = None
             self.spider_attack_sound = None
+            self.intense_sequence_sound = None
             self.ambient_channel = None
             self.footstep_channel = None
             self.monster_appearing_channel = None
             self.monster_scream_channel = None
             self.spider_walking_channel = None
             self.spider_attack_channel = None
+            self.intense_sequence_channel = None
             self._last_monster_scream_index = None
             self.ambient_playing = False
             self.footstep_playing = False
@@ -74,6 +76,8 @@ class AudioManager:
         self.spider_walking_playing = False
         self.spider_attack_channel = None
         self.spider_attack_sound = None
+        self.intense_sequence_channel = None
+        self.intense_sequence_sound = None
         self._last_monster_scream_index: Optional[int] = None
         self.monster_appearing_cooldown_seconds = 30.0
         self.last_monster_appearing_at: Optional[float] = None
@@ -145,6 +149,15 @@ class AudioManager:
             else:
                 print(f"Warning: Spider attack sound not found at {spider_attack_path}")
                 self.spider_attack_sound = None
+
+            intense_sequence_path = self.resources_path / "intense_sequence.mp3"
+            if intense_sequence_path.exists():
+                self.intense_sequence_sound = pygame.mixer.Sound(str(intense_sequence_path))
+                self.intense_sequence_sound.set_volume(self.sfx_volume)
+                print(f"Loaded intense sequence sound from {intense_sequence_path}")
+            else:
+                print(f"Warning: Intense sequence sound not found at {intense_sequence_path}")
+                self.intense_sequence_sound = None
         except Exception as e:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
@@ -153,6 +166,7 @@ class AudioManager:
             self.monster_scream_sounds = []
             self.spider_walking_sound = None
             self.spider_attack_sound = None
+            self.intense_sequence_sound = None
 
     def play_ambient_loop(self) -> None:
         """Play ambient sound in a loop using pygame.mixer.music"""
@@ -192,6 +206,8 @@ class AudioManager:
             self.spider_walking_sound.set_volume(self.sfx_volume)
         if self.spider_attack_sound is not None:
             self.spider_attack_sound.set_volume(self.sfx_volume)
+        if self.intense_sequence_sound is not None:
+            self.intense_sequence_sound.set_volume(self.sfx_volume)
 
     def stop_ambient(self) -> None:
         """Stop the ambient sound"""
@@ -362,6 +378,29 @@ class AudioManager:
             return True
         except Exception as e:
             print(f"Warning: Failed to play spider attack sound: {e}")
+            return False
+
+    def play_intense_sequence(self) -> bool:
+        """Play the level-5 intense sequence when the hallway begins."""
+        if not self.available or self.intense_sequence_sound is None:
+            return False
+
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+
+            if channel is None:
+                print("Warning: Could not find available audio channel for intense sequence")
+                return False
+
+            channel.set_volume(self.sfx_volume)
+            channel.play(self.intense_sequence_sound)
+            self.intense_sequence_channel = channel
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play intense sequence sound: {e}")
             return False
 
     def cleanup(self) -> None:
