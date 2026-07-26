@@ -33,6 +33,18 @@ class MazeManager:
         self.wall_height = 3.0
         self.exit_portal_height = 2.0
         self.exit_portal_width_ratio = 1.0 / 3.0
+        self.wall_surface_color = color.rgb(240, 231, 196)
+        self.floor_surface_color = color.rgb(227, 214, 174)
+        self.ceiling_surface_color = color.rgb(240, 231, 196)
+        self.lamp_positions: List[Vec3] = []
+        self.lamp_cells: List[Cell] = []
+        # Per-cell entity registries so lighting (or anything else) can look up the
+        # exact structural geometry that borders a given cell, and can walk the real
+        # walkable-cell graph to find geometry that is actually *reachable* from a
+        # point, rather than just "nearby in world-space" (which would ignore walls).
+        self._floor_entities: dict[Cell, Entity] = {}
+        self._ceiling_entities: dict[Cell, Entity] = {}
+        self._wall_entities: dict[Cell, Entity] = {}
 
         self._inv_cell_size: float = 1.0 / cell_size
 
@@ -272,18 +284,18 @@ class MazeManager:
         }
         return min(distances, key=distances.get)
 
-    def _append_exit_door_entities(self, x: float, z: float, wall_height: float) -> None:
-        self.entities.append(
-            Entity(
-                model="cube",
-                position=Vec3(x, wall_height * 0.5, z),
-                scale=Vec3(self.cell_size, wall_height, self.cell_size),
-                color=color.rgb(214, 205, 170),
-                texture=self.wall_texture,
-                texture_scale=(1.0, 1.4),
-                collider="box",
-            )
+    def _append_exit_door_entities(self, x: float, z: float, wall_height: float, cell: Cell) -> None:
+        wall_entity = Entity(
+            model="cube",
+            position=Vec3(x, wall_height * 0.5, z),
+            scale=Vec3(self.cell_size, wall_height, self.cell_size),
+            color=self.wall_surface_color,
+            texture=self.wall_texture,
+            texture_scale=(1.0, 1.4),
+            collider="box",
         )
+        self.entities.append(wall_entity)
+        self._wall_entities[cell] = wall_entity
 
         tape_rng = random.Random(f"{self.seed}|exit_tape|{self.exit_wall_cell[0]}|{self.exit_wall_cell[1]}")
         tape_color = color.rgb(48, 148, 255)
@@ -347,7 +359,9 @@ class MazeManager:
 
     def _build_entities(self) -> None:
         wall_height = self.wall_height
-        surface_color = color.rgb(214, 205, 170)
+        wall_color = self.wall_surface_color
+        floor_color = self.floor_surface_color
+        ceiling_color = self.ceiling_surface_color
         light_panel_color = color.rgb(255, 255, 240)
 
         for lz in range(self.grid_size):
@@ -358,50 +372,55 @@ class MazeManager:
 
                 if is_walkable:
                     # Floor and ceiling only needed for walkable (visible) cells.
-                    self.entities.append(
-                        Entity(
-                            model="cube",
-                            position=Vec3(x, 0.0, z),
-                            scale=Vec3(self.cell_size, 0.1, self.cell_size),
-                            color=surface_color,
-                            texture=self.floor_texture,
-                            texture_scale=(2.2, 2.2),
-                        )
+                    floor_entity = Entity(
+                        model="cube",
+                        position=Vec3(x, 0.0, z),
+                        scale=Vec3(self.cell_size, 0.1, self.cell_size),
+                        color=floor_color,
+                        texture=self.floor_texture,
+                        texture_scale=(2.2, 2.2),
                     )
-                    self.entities.append(
-                        Entity(
-                            model="cube",
-                            position=Vec3(x, wall_height, z),
-                            scale=Vec3(self.cell_size, 0.1, self.cell_size),
-                            color=surface_color,
-                            texture=self.ceiling_texture,
-                            texture_scale=(1.9, 1.9),
-                        )
+                    self.entities.append(floor_entity)
+                    self._floor_entities[(gx, gz)] = floor_entity
+
+                    ceiling_entity = Entity(
+                        model="cube",
+                        position=Vec3(x, wall_height, z),
+                        scale=Vec3(self.cell_size, 0.1, self.cell_size),
+                        color=ceiling_color,
+                        texture=self.ceiling_texture,
+                        texture_scale=(1.9, 1.9),
                     )
+                    self.entities.append(ceiling_entity)
+                    self._ceiling_entities[(gx, gz)] = ceiling_entity
+
                     if (gx + gz) % 3 == 0:
+                        lamp_pos = Vec3(x, wall_height - 0.07, z)
                         self.entities.append(
                             Entity(
                                 model="cube",
-                                position=Vec3(x, wall_height - 0.07, z),
+                                position=lamp_pos,
                                 scale=Vec3(self.cell_size * 0.72, 0.02, self.cell_size * 0.28),
                                 color=light_panel_color,
                             )
                         )
+                        self.lamp_positions.append(lamp_pos)
+                        self.lamp_cells.append((gx, gz))
                 else:
                     if (gx, gz) == self.exit_wall_cell:
-                        self._append_exit_door_entities(x, z, wall_height)
+                        self._append_exit_door_entities(x, z, wall_height, (gx, gz))
                         continue
-                    self.entities.append(
-                        Entity(
-                            model="cube",
-                            position=Vec3(x, wall_height / 2.0, z),
-                            scale=Vec3(self.cell_size, wall_height, self.cell_size),
-                            color=surface_color,
-                            texture=self.wall_texture,
-                            texture_scale=(1.0, 1.4),
-                            collider="box",
-                        )
+                    wall_entity = Entity(
+                        model="cube",
+                        position=Vec3(x, wall_height / 2.0, z),
+                        scale=Vec3(self.cell_size, wall_height, self.cell_size),
+                        color=wall_color,
+                        texture=self.wall_texture,
+                        texture_scale=(1.0, 1.4),
+                        collider="box",
                     )
+                    self.entities.append(wall_entity)
+                    self._wall_entities[(gx, gz)] = wall_entity
 
     def _generate_level(self) -> None:
         self.walkable_cells = self._generate_walkable_cells()
@@ -422,6 +441,52 @@ class MazeManager:
             destroy(entity)
         self.entities.clear()
         self.walkable_cells.clear()
+        self.lamp_positions.clear()
+        self.lamp_cells.clear()
+        self._floor_entities.clear()
+        self._ceiling_entities.clear()
+        self._wall_entities.clear()
+
+    def entities_near_cell(self, cell: Cell, hops: int = 2) -> List[Entity]:
+        """Collect floor/ceiling/wall entities reachable from `cell` by walking the
+        real walkable-cell graph up to `hops` steps.
+
+        This intentionally uses graph connectivity (via `walkable_neighbors`) rather
+        than raw Euclidean/world-space distance. Two corridors can be only one wall
+        thickness apart in world space yet be structurally unconnected; a naive
+        distance-based lookup would treat them as "nearby" and light bleed-through
+        would occur. Walking the walkable graph guarantees a lamp can only affect
+        geometry that is actually part of its own connected corridor segment.
+        """
+        visited: Set[Cell] = {cell}
+        frontier: List[Cell] = [cell]
+        for _ in range(max(0, hops)):
+            next_frontier: List[Cell] = []
+            for c in frontier:
+                for nb in self.walkable_neighbors(c):
+                    if nb not in visited:
+                        visited.add(nb)
+                        next_frontier.append(nb)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        collected: List[Entity] = []
+        for c in visited:
+            floor_entity = self._floor_entities.get(c)
+            if floor_entity is not None:
+                collected.append(floor_entity)
+            ceiling_entity = self._ceiling_entities.get(c)
+            if ceiling_entity is not None:
+                collected.append(ceiling_entity)
+
+            cx, cz = c
+            for nx, nz in ((cx + 1, cz), (cx - 1, cz), (cx, cz + 1), (cx, cz - 1)):
+                wall_entity = self._wall_entities.get((nx, nz))
+                if wall_entity is not None:
+                    collected.append(wall_entity)
+
+        return collected
 
     def world_from_cell(self, cell: Cell) -> tuple[float, float]:
         gx, gz = cell

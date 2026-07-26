@@ -4,7 +4,8 @@ import math
 import random
 from typing import List
 
-from ursina import Entity, Vec3, color, destroy, time
+from panda3d.core import PNMImage, Texture as PandaTexture
+from ursina import Entity, Texture, Vec3, color, destroy, time
 
 from audio import get_audio_manager
 from maze import Cell, MazeManager
@@ -47,27 +48,45 @@ class SpiderController(Entity):
         self.audio = get_audio_manager()
         self._build_visual()
 
+    def _noisy_black_texture(self, key: str, size: int = 24, base: int = 8, jitter: int = 10) -> Texture:
+        """Create a low-res grayscale texture so each part has visible pixel noise."""
+        img = PNMImage(size, size)
+        rng = random.Random(f"spider|{key}")
+        for y in range(size):
+            for x in range(size):
+                shade = max(0, min(255, base + rng.randint(0, jitter))) / 255.0
+                img.setXel(x, y, shade, shade, shade)
+
+        panda_tex = PandaTexture(f"spider_noise_{key}")
+        panda_tex.load(img)
+        texture = Texture(panda_tex)
+        texture.filtering = "nearest"
+        return texture
+
     def _build_visual(self) -> None:
         """Create spider: abdomen + cephalothorax + head spheres, red eyes, white fangs, 8 animated legs."""
         # Abdomen – large rear sphere
         abdomen = Entity(parent=self, model="sphere",
                          position=Vec3(0, 0.46, -0.32),
                          scale=Vec3(0.64, 0.60, 0.70),
-                         color=color.black)
+                         color=color.white,
+                         texture=self._noisy_black_texture("abdomen", size=20, base=10, jitter=10))
         self.visual_parts.append(abdomen)
 
         # Cephalothorax – smaller front body sphere
         thorax = Entity(parent=self, model="sphere",
                         position=Vec3(0, 0.46, 0.16),
                         scale=Vec3(0.44, 0.40, 0.46),
-                        color=color.black)
+                        color=color.white,
+                        texture=self._noisy_black_texture("thorax", size=20, base=11, jitter=10))
         self.visual_parts.append(thorax)
 
         # Head – small sphere at the very front
         head = Entity(parent=self, model="sphere",
                       position=Vec3(0, 0.60, 0.43),
                       scale=Vec3(0.27, 0.25, 0.26),
-                      color=color.black)
+                      color=color.white,
+                      texture=self._noisy_black_texture("head", size=18, base=12, jitter=10))
         self.visual_parts.append(head)
 
         # Red glowing eyes
@@ -112,11 +131,13 @@ class SpiderController(Entity):
             ll = Entity(parent=ll_hip, model="cube",
                         position=Vec3(0, -upper_half, 0),
                         scale=Vec3(leg_thickness, upper_length, leg_thickness),
-                        color=color.black)
+                        color=color.white,
+                        texture=self._noisy_black_texture(f"leg_l_{x}_{z}", size=14, base=8, jitter=10))
             rl = Entity(parent=rl_hip, model="cube",
                         position=Vec3(0, -upper_half, 0),
                         scale=Vec3(leg_thickness, upper_length, leg_thickness),
-                        color=color.black)
+                        color=color.white,
+                        texture=self._noisy_black_texture(f"leg_r_{x}_{z}", size=14, base=8, jitter=10))
 
             self.legs.extend([ll_hip, rl_hip])
             self._leg_base_z_rotations.extend([-rz, rz])

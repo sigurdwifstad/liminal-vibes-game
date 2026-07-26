@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import random
 
-from ursina import AmbientLight, DirectionalLight, Entity, Text, Ursina, Vec3, application, camera, color, scene, time, window
+from ursina import AmbientLight, PointLight, Entity, Text, Ursina, Vec3, application, camera, color, destroy, scene, time, window
 
 from audio import get_audio_manager
 from core_logic import format_mmss
@@ -18,10 +18,18 @@ _ACTIVE_GAME: LiminalVibesGame | None = None
 
 
 class LiminalVibesGame:
-    def __init__(self, test: bool = False, test_level_5_only: bool = False, start_level: int = 1):
+    # Hard distance cutoff for lamp point lights, expressed in grid cells.
+    _LIGHT_MAX_DISTANCE_CELLS = 2.0
+    # How many walkable-graph hops away from a lamp's own cell may still receive its
+    # light. Kept in step with `_LIGHT_MAX_DISTANCE_CELLS` so the light-linking reach
+    # roughly matches the real falloff distance.
+    _LIGHT_LINK_HOPS = 2
+
+    def __init__(self, test: bool = False, test_level_5_only: bool = False, start_level: int = 1, lamp_brightness: float = 0.35):
         self.test = test
         self.test_level_5_only = test_level_5_only
         self.start_level = max(1, int(start_level))
+        self.lamp_brightness = self._clamp_lamp_brightness(lamp_brightness)
         self.level = self.start_level
         self.maze: MazeManager | None = None
         self.player: PlayerController | None = None
@@ -30,6 +38,7 @@ class LiminalVibesGame:
         self._spider_drained_this_encounter = False
         self.ui = GameStateUI()
         self.audio = get_audio_manager()
+        self.point_lights: list[PointLight] = []
 
         self._last_hud_color_key: str = ""   # throttle redundant stamina-bar color writes
 
@@ -56,9 +65,80 @@ class LiminalVibesGame:
     def _setup_lighting(self) -> None:
         scene.fog_density = (20, 130)
         scene.fog_color = color.rgb(195, 195, 170)
-        AmbientLight(color=color.rgba(212, 210, 198, 0.5))
-        key = DirectionalLight(color=color.rgba(240, 232, 210, 0.32))
-        key.look_at(Vec3(0.6, -1.0, 0.8))
+        AmbientLight(color=color.rgba(214, 212, 202, 1e-6))
+
+    @staticmethod
+    def _clamp_lamp_brightness(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    def set_lamp_brightness(self, value: float) -> None:
+        self.lamp_brightness = self._clamp_lamp_brightness(value)
+        self._setup_point_lights_from_lamps()
+
+    def _lamp_light_color(self):
+        intensity = self._clamp_lamp_brightness(self.lamp_brightness)
+        return color.rgb(
+            max(0, min(255, round(248 * intensity))),
+            max(0, min(255, round(246 * intensity))),
+            max(0, min(255, round(236 * intensity))),
+        )
+
+    def _setup_point_lights_from_lamps(self) -> None:
+        for light in self.point_lights:
+            destroy(light)
+        self.point_lights.clear()
+
+        if self.maze is None:
+            return
+
+        self.lamp_brightness = self._clamp_lamp_brightness(self.lamp_brightness)
+        if self.lamp_brightness <= 0.0:
+            return
+
+        # Real distance falloff: Ursina's PointLight does not expose `.range` or
+        # `.brightness` attributes, so assigning them (as this code used to do)
+        # silently created inert Python instance attributes that never reached the
+        # underlying Panda3D light node. Panda3D's default point-light attenuation
+        # is (1, 0, 0) -- i.e. constant, no falloff -- so every lamp was previously
+        # shining at full, undiminished strength regardless of distance.
+        #
+        # Tuned so illumination falls to ~5% by ~1.75 cells, and is hard-cut at
+        # `_light_max_distance_cells` cells.
+        falloff_distance = self.maze.cell_size * 1.75
+        quadratic_term = 19.0 / (falloff_distance ** 2)
+        max_distance = self.maze.cell_size * self._LIGHT_MAX_DISTANCE_CELLS
+
+        lamp_color = self._lamp_light_color()
+        for cell, lamp_pos in zip(self.maze.lamp_cells, self.maze.lamp_positions):
+            light = PointLight(color=lamp_color)
+            light.position = lamp_pos
+
+            underlying = getattr(light, "_light", None)
+            if underlying is not None and hasattr(underlying, "setAttenuation"):
+                underlying.setAttenuation((1.0, 0.0, quadratic_term))
+                underlying.setMaxDistance(max_distance)
+
+            # Light-linking: Ursina's PointLight attaches itself globally
+            # (`render.setLight(...)`) in its constructor, which means Panda3D lights
+            # *every* piece of geometry in the scene with it, with no regard for
+            # solid walls in between -- light passes straight through walls. Ursina's
+            # PointLight also has no shadow-casting support (unlike DirectionalLight),
+            # and shadow-casting dozens/hundreds of point lights via cube-map shadow
+            # buffers would be far too expensive for a maze that can have hundreds of
+            # lamps (up to a 61x61 grid). Instead, detach the light from the global
+            # scene root and re-link it only to the geometry that is actually
+            # reachable from the lamp's own cell via the walkable-cell graph. This
+            # keeps each lamp's influence confined to its own connected corridor
+            # segment, matching the physical intuition that a wall backing onto an
+            # unconnected, unlit area of the maze should stay dark.
+            if hasattr(light, "get_child"):
+                light_np = light.get_child(0)
+                if not light_np.is_empty():
+                    light_np.get_top().clear_light(light_np)
+                    for entity in self.maze.entities_near_cell(cell, hops=self._LIGHT_LINK_HOPS):
+                        entity.set_light(light_np)
+
+            self.point_lights.append(light)
 
     def _random_seed(self) -> int:
         return random.randint(1, 2_000_000_000)
@@ -76,6 +156,7 @@ class LiminalVibesGame:
 
         seed = self._random_seed()
         self.maze = MazeManager(seed=seed, level=self.level, cell_size=4.0, test=self.test)
+        self._setup_point_lights_from_lamps()
 
         if self.player is None:
             self.player = PlayerController(position=Vec3(0, 0, 0))
@@ -245,21 +326,26 @@ def input(key: str) -> None:
         _ACTIVE_GAME.input(key)
 
 
-def main(test: bool = False, test_level_5_only: bool = False, start_level: int = 1) -> None:
+def main(test: bool = False, test_level_5_only: bool = False, start_level: int = 1, lamp_brightness: float = 0.8) -> None:
     app = Ursina(borderless=False, fullscreen=True)
-    window.title = "Liminal Spaces"
+    window.title = "Liminal Vibes"
     window.color = color.rgb(130, 130, 115)
     window.exit_button.visible = True
     window.fps_counter.enabled = True
 
     global _ACTIVE_GAME
-    _ACTIVE_GAME = LiminalVibesGame(test=test, test_level_5_only=test_level_5_only, start_level=start_level)
+    _ACTIVE_GAME = LiminalVibesGame(
+        test=test,
+        test_level_5_only=test_level_5_only,
+        start_level=start_level,
+        lamp_brightness=lamp_brightness,
+    )
 
     app.run()
 
 
-def run(test: bool = False, test_level_5_only: bool = False, start_level: int = 1) -> None:
-    main(test=test, test_level_5_only=test_level_5_only, start_level=start_level)
+def run(test: bool = False, test_level_5_only: bool = False, start_level: int = 1, lamp_brightness: float = 0.35) -> None:
+    main(test=test, test_level_5_only=test_level_5_only, start_level=start_level, lamp_brightness=lamp_brightness)
 
 
 if __name__ == "__main__":
@@ -267,5 +353,6 @@ if __name__ == "__main__":
     parser.add_argument("--test", action="store_true", help="Enable test mode with immediate monster spawn")
     parser.add_argument("--test-level-5", action="store_true", help="Enable test mode only when level 5 is reached")
     parser.add_argument("--start-level", type=int, default=1, help="Start a new run at the given level (for example: 5)")
+    parser.add_argument("--lamp-brightness", type=float, default=1.0, help="Lamp point light intensity from 0.0 (off) to 1.0 (full)")
     args = parser.parse_args()
-    main(test=args.test, test_level_5_only=args.test_level_5, start_level=args.start_level)
+    main(test=args.test, test_level_5_only=args.test_level_5, start_level=args.start_level, lamp_brightness=args.lamp_brightness)
