@@ -56,12 +56,16 @@ class MazeManager:
         self._generate_level()
 
     def _maze_cells_per_side(self, level: int) -> int:
+        #if self.test:
+        #    return 9
+        #size = 17 + (level - 1) * 4
+        #if size % 2 == 0:
+        #    size += 1
+        #return min(size, 61)
         if self.test:
             return 9
-        size = 17 + (level - 1) * 4
-        if size % 2 == 0:
-            size += 1
-        return min(size, 61)
+        else:
+            return 17
 
     def _global_from_local(self, lx: int, lz: int) -> Cell:
         return lx - self.half_grid, lz - self.half_grid
