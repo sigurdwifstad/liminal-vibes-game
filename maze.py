@@ -64,6 +64,8 @@ class MazeManager:
         #return min(size, 61)
         if self.test:
             return 9
+        elif self.level == 5:
+            return 35
         else:
             return 17
 

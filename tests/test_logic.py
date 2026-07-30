@@ -354,6 +354,21 @@ class TestCoreLogic(unittest.TestCase):
         ):
             self.assertTrue(manager.play_intense_sequence())
 
+    @patch("audio.pygame.mixer.init")
+    def test_audio_manager_restarts_footsteps_when_sprint_state_changes(self, _mock_init):
+        manager = AudioManager()
+        manager.footstep_sound = object()
+        manager.footstep_playing = True
+
+        with patch.object(manager, "stop_footstep_loop") as stop_mock, patch.object(
+            manager, "play_footstep_loop"
+        ) as play_mock:
+            manager.set_footstep_sprinting(True)
+
+        self.assertTrue(manager.footstep_sprinting)
+        stop_mock.assert_called_once()
+        play_mock.assert_called_once()
+
     def test_level_5_is_a_single_hallway(self):
         try:
             from maze import MazeManager

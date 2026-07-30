@@ -21,6 +21,7 @@ class AudioManager:
     def __init__(self, ambient_volume: float = 1.0, sfx_volume: float = 0.3):
         self.ambient_volume = clamp_volume(ambient_volume)
         self.sfx_volume = clamp_volume(sfx_volume)
+        self.footstep_sprint_playback_rate = 1.4
         # Initialize pygame mixer
         try:
             pygame.mixer.init(buffer=512)
@@ -42,6 +43,8 @@ class AudioManager:
             self.spider_walking_channel = None
             self.spider_attack_channel = None
             self.intense_sequence_channel = None
+            self.footstep_sprint_sound = None
+            self.footstep_sprinting = False
             self._last_monster_scream_index = None
             self.ambient_playing = False
             self.footstep_playing = False
@@ -65,6 +68,8 @@ class AudioManager:
         # Footstep sounds - will use a dedicated channel for looping
         self.footstep_channel = None
         self.footstep_sound = None
+        self.footstep_sprint_sound = None
+        self.footstep_sprinting = False
         self.footstep_playing = False
 
         self.monster_appearing_channel = None
@@ -106,10 +111,14 @@ class AudioManager:
             if footstep_path.exists():
                 self.footstep_sound = pygame.mixer.Sound(str(footstep_path))
                 self.footstep_sound.set_volume(self.sfx_volume)
+                self.footstep_sprint_sound = self._build_playback_rate_sound(
+                    self.footstep_sound, self.footstep_sprint_playback_rate
+                )
                 print(f"Loaded footstep sound from {footstep_path}")
             else:
                 print(f"Warning: Footstep sound not found at {footstep_path}")
                 self.footstep_sound = None
+                self.footstep_sprint_sound = None
 
             monster_appearing_path = self.resources_path / "monster_appearing.mp3"
             if monster_appearing_path.exists():
@@ -162,11 +171,56 @@ class AudioManager:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
             self.footstep_sound = None
+            self.footstep_sprint_sound = None
             self.monster_appearing_sound = None
             self.monster_scream_sounds = []
             self.spider_walking_sound = None
             self.spider_attack_sound = None
             self.intense_sequence_sound = None
+
+    def _current_footstep_sound(self):
+        if self.footstep_sprinting and self.footstep_sprint_sound is not None:
+            return self.footstep_sprint_sound
+        return self.footstep_sound
+
+    def _build_playback_rate_sound(self, source_sound, playback_rate: float):
+        if playback_rate <= 1.0:
+            return None
+        if not hasattr(source_sound, "get_raw"):
+            return None
+        if not hasattr(pygame.mixer, "get_init"):
+            return None
+
+        mixer_init = pygame.mixer.get_init()
+        if not mixer_init:
+            return None
+
+        try:
+            _frequency, sample_format, channel_count = mixer_init
+            sample_width = abs(int(sample_format)) // 8
+            frame_size = sample_width * int(channel_count)
+            if frame_size <= 0:
+                return None
+
+            source_bytes = source_sound.get_raw()
+            frame_count = len(source_bytes) // frame_size
+            if frame_count < 2:
+                return None
+
+            sped_up_frame_count = max(1, int(frame_count / playback_rate))
+            sped_up_bytes = bytearray(sped_up_frame_count * frame_size)
+            for dest_frame in range(sped_up_frame_count):
+                src_frame = min(frame_count - 1, int(dest_frame * playback_rate))
+                src_start = src_frame * frame_size
+                src_end = src_start + frame_size
+                dest_start = dest_frame * frame_size
+                sped_up_bytes[dest_start : dest_start + frame_size] = source_bytes[src_start:src_end]
+
+            sprint_sound = pygame.mixer.Sound(buffer=bytes(sped_up_bytes))
+            sprint_sound.set_volume(self.sfx_volume)
+            return sprint_sound
+        except Exception:
+            return None
 
     def play_ambient_loop(self) -> None:
         """Play ambient sound in a loop using pygame.mixer.music"""
@@ -198,6 +252,8 @@ class AudioManager:
         self.sfx_volume = clamp_volume(volume)
         if self.footstep_sound is not None:
             self.footstep_sound.set_volume(self.sfx_volume)
+        if self.footstep_sprint_sound is not None:
+            self.footstep_sprint_sound.set_volume(self.sfx_volume)
         if self.monster_appearing_sound is not None:
             self.monster_appearing_sound.set_volume(self.sfx_volume)
         for scream_sound in self.monster_scream_sounds:
@@ -221,11 +277,14 @@ class AudioManager:
 
     def play_footstep_loop(self) -> None:
         """Start looping footstep sounds"""
-        if not self.available or self.footstep_sound is None:
+        if not self.available:
             return
 
         if not self.footstep_playing:
             try:
+                footstep_sound = self._current_footstep_sound()
+                if footstep_sound is None:
+                    return
                 # Find an available channel and play on it
                 channel = pygame.mixer.find_channel()
                 if channel is None:
@@ -235,7 +294,7 @@ class AudioManager:
 
                 if channel is not None:
                     channel.set_volume(self.sfx_volume)
-                    channel.play(self.footstep_sound, loops=-1)
+                    channel.play(footstep_sound, loops=-1)
                     self.footstep_channel = channel  # Keep reference
                     self.footstep_playing = True
                 else:
@@ -243,14 +302,25 @@ class AudioManager:
             except Exception as e:
                 print(f"Warning: Failed to play footstep loop: {e}")
 
+    def set_footstep_sprinting(self, sprinting: bool) -> None:
+        sprinting = bool(sprinting)
+        if sprinting == self.footstep_sprinting:
+            return
+        self.footstep_sprinting = sprinting
+
+        if self.footstep_playing:
+            self.stop_footstep_loop()
+            self.play_footstep_loop()
+
     def stop_footstep_loop(self) -> None:
         """Stop looping footstep sounds"""
         if self.footstep_channel is not None:
             try:
                 self.footstep_channel.stop()
-                self.footstep_playing = False
             except Exception as e:
                 print(f"Warning: Failed to stop footstep loop: {e}")
+        self.footstep_channel = None
+        self.footstep_playing = False
 
     def play_spider_walking_loop(self) -> None:
         """Start looping spider walking sounds without restarting when already active."""
@@ -433,6 +503,5 @@ def get_audio_manager(ambient_volume: Optional[float] = None, sfx_volume: Option
         if sfx_volume is not None:
             _AUDIO_MANAGER.set_sfx_volume(sfx_volume)
     return _AUDIO_MANAGER
-
 
 

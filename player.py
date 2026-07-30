@@ -130,9 +130,11 @@ class PlayerController(Entity):
 
         # Handle footstep sounds - loop while moving, stop when not moving
         if moving:
+            self.audio.set_footstep_sprinting(self.sprinting)
             if not self.audio.footstep_playing:
                 self.audio.play_footstep_loop()
         else:
+            self.audio.set_footstep_sprinting(False)
             if self.audio.footstep_playing:
                 self.audio.stop_footstep_loop()
 

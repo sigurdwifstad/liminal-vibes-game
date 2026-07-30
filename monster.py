@@ -32,7 +32,7 @@ class MonsterController(Entity):
         self.path_refresh_interval_far = 0.90
         self.catch_distance = 1.2
         self.max_speed = 8.0
-        self.level_speeds: List[float] = [2.0, 4.0, 6.0, 6.2]  # indexed by level-1, capped at last entry
+        self.level_speeds: List[float] = [2.0, 4.0, 6.0, 6.2, 8.0, 6.2]  # indexed by level-1, capped at last entry
         self.current_speed = 0.0
         self.would_catch_player = False
         self.walk_anim_phase = 0.0
