@@ -53,7 +53,7 @@ class MonsterController(Entity):
         self._was_reaching_close = False
         self._build_visual()
 
-    def _noisy_black_texture(self, key: str, size: int = 24, base: int = 8, jitter: int = 10) -> Texture:
+    def _noisy_black_texture(self, key: str, size: int = 24, base: int = 10, jitter: int = 10) -> Texture:
         """Create a low-res grayscale texture so each part has visible pixel noise."""
         img = PNMImage(size, size)
         rng = random.Random(f"monster|{key}")
@@ -75,7 +75,7 @@ class MonsterController(Entity):
             position=Vec3(0, 1.2, 0),
             scale=Vec3(0.45, 1.6, 0.35),
             color=color.white,
-            texture=self._noisy_black_texture("body", size=20, base=10, jitter=10),
+            texture=self._noisy_black_texture("body", size=20,),
         )
         head = Entity(
             parent=self,
@@ -83,10 +83,10 @@ class MonsterController(Entity):
             position=Vec3(0, 2.2, 0),
             scale=Vec3(0.36, 0.36, 0.36),
             color=color.white,
-            texture=self._noisy_black_texture("head", size=18, base=11, jitter=10),
+            texture=self._noisy_black_texture("head", size=18,),
         )
 
-        # Front-only scary face: black mask, red eyes, jagged grin, and white fangs.
+        # Front-only scary face: black mask, empty black eyes, jagged grin, and white fangs.
         face_z = 0.54
         front_z = 0.58
         Entity(
@@ -95,22 +95,23 @@ class MonsterController(Entity):
             position=Vec3(0.0, 0.0, face_z),
             scale=Vec3(0.94, 0.94, 0.08),
             color=color.white,
-            texture=self._noisy_black_texture("face", size=16, base=7, jitter=10),
+            texture=self._noisy_black_texture("face", size=16,),
         )
-        Entity(parent=head, model="cube", position=Vec3(-0.22, 0.21, front_z), scale=Vec3(0.18, 0.16, 0.05), color=color.rgb(230, 0, 0))
-        Entity(parent=head, model="cube", position=Vec3(0.22, 0.21, front_z), scale=Vec3(0.18, 0.16, 0.05), color=color.rgb(230, 0, 0))
+        Entity(parent=head, model="cube", position=Vec3(-0.22, 0.21, front_z), scale=Vec3(0.18, 0.16, 0.05), color=color.rgb(0, 0, 0))
+        Entity(parent=head, model="cube", position=Vec3(0.22, 0.21, front_z), scale=Vec3(0.18, 0.16, 0.05), color=color.rgb(0, 0, 0))
         Entity(parent=head, model="cube", position=Vec3(-0.24, -0.22, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
         Entity(parent=head, model="cube", position=Vec3(-0.12, -0.30, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
         Entity(parent=head, model="cube", position=Vec3(0.0, -0.34, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
         Entity(parent=head, model="cube", position=Vec3(0.12, -0.30, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
         Entity(parent=head, model="cube", position=Vec3(0.24, -0.22, front_z), scale=Vec3(0.14, 0.08, 0.05), color=color.rgb(90, 0, 0))
-        Entity(parent=head, model="cube", position=Vec3(-0.12, -0.36, 0.6), scale=Vec3(0.06, 0.16, 0.05), color=color.white)
-        Entity(parent=head, model="cube", position=Vec3(-0.24, -0.34, 0.6), scale=Vec3(0.05, 0.14, 0.05), color=color.white)
-        Entity(parent=head, model="cube", position=Vec3(-0.06, -0.38, 0.6), scale=Vec3(0.05, 0.16, 0.05), color=color.white)
-        Entity(parent=head, model="cube", position=Vec3(0.0, -0.39, 0.6), scale=Vec3(0.06, 0.18, 0.05), color=color.white)
-        Entity(parent=head, model="cube", position=Vec3(0.06, -0.38, 0.6), scale=Vec3(0.05, 0.16, 0.05), color=color.white)
-        Entity(parent=head, model="cube", position=Vec3(0.12, -0.36, 0.6), scale=Vec3(0.06, 0.16, 0.05), color=color.white)
-        Entity(parent=head, model="cube", position=Vec3(0.24, -0.34, 0.6), scale=Vec3(0.05, 0.14, 0.05), color=color.white)
+        fang_color = color.rgb(240, 239, 203)
+        Entity(parent=head, model="cube", position=Vec3(-0.12, -0.36, 0.6), scale=Vec3(0.06, 0.16, 0.05), color=fang_color)
+        Entity(parent=head, model="cube", position=Vec3(-0.24, -0.34, 0.6), scale=Vec3(0.05, 0.14, 0.05), color=fang_color)
+        Entity(parent=head, model="cube", position=Vec3(-0.06, -0.38, 0.6), scale=Vec3(0.05, 0.16, 0.05), color=fang_color)
+        Entity(parent=head, model="cube", position=Vec3(0.0, -0.39, 0.6), scale=Vec3(0.06, 0.18, 0.05), color=fang_color)
+        Entity(parent=head, model="cube", position=Vec3(0.06, -0.38, 0.6), scale=Vec3(0.05, 0.16, 0.05), color=fang_color)
+        Entity(parent=head, model="cube", position=Vec3(0.12, -0.36, 0.6), scale=Vec3(0.06, 0.16, 0.05), color=fang_color)
+        Entity(parent=head, model="cube", position=Vec3(0.24, -0.34, 0.6), scale=Vec3(0.05, 0.14, 0.05), color=fang_color)
 
         self.left_leg = Entity(
             parent=self,
@@ -118,7 +119,7 @@ class MonsterController(Entity):
             position=Vec3(-0.2, 0.55, 0),
             scale=Vec3(0.1, 1.1, 0.1),
             color=color.white,
-            texture=self._noisy_black_texture("left_leg", size=16, base=9, jitter=10),
+            texture=self._noisy_black_texture("left_leg", size=16, ),
         )
         self.right_leg = Entity(
             parent=self,
@@ -126,7 +127,7 @@ class MonsterController(Entity):
             position=Vec3(0.2, 0.55, 0),
             scale=Vec3(0.1, 1.1, 0.1),
             color=color.white,
-            texture=self._noisy_black_texture("right_leg", size=16, base=9, jitter=10),
+            texture=self._noisy_black_texture("right_leg", size=16,),
         )
         self.left_arm = Entity(
             parent=self,
@@ -134,7 +135,7 @@ class MonsterController(Entity):
             position=Vec3(-0.38, 1.3, 0),
             scale=Vec3(0.09, 1.2, 0.09),
             color=color.white,
-            texture=self._noisy_black_texture("left_arm", size=16, base=10, jitter=10),
+            texture=self._noisy_black_texture("left_arm", size=16,),
         )
         self.right_arm = Entity(
             parent=self,
@@ -142,7 +143,7 @@ class MonsterController(Entity):
             position=Vec3(0.38, 1.3, 0),
             scale=Vec3(0.09, 1.2, 0.09),
             color=color.white,
-            texture=self._noisy_black_texture("right_arm", size=16, base=10, jitter=10),
+            texture=self._noisy_black_texture("right_arm", size=16,),
         )
         self.left_arm_default_position = Vec3(-0.38, 1.3, 0)
         self.right_arm_default_position = Vec3(0.38, 1.3, 0)

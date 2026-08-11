@@ -1,0 +1,87 @@
+name: Build installers
+
+# Builds native, prerequisite-free installers for both Windows and macOS.
+# PyInstaller cannot cross-compile, so each installer is built on its own
+# native GitHub-hosted runner.
+#
+# Triggers:
+#   - Manually, via the "Run workflow" button (workflow_dispatch)
+#   - Automatically, when a tag like "v1.0.0" is pushed (also creates/updates
+#     a GitHub Release with both installers attached)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: Build LiminalVibes.exe
+        run: pyinstaller --noconfirm --clean LiminalVibes.spec
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Windows installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiminalVibesSetup-windows
+          path: installer/Output/LiminalVibesSetup.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: Build LiminalVibes.app
+        run: pyinstaller --noconfirm --clean LiminalVibes.spec
+
+      - name: Build macOS .dmg
+        run: installer/build_macos_dmg.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiminalVibes-macos
+          path: dist/LiminalVibes.dmg
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create/update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/LiminalVibesSetup-windows/LiminalVibesSetup.exe
+            artifacts/LiminalVibes-macos/LiminalVibes.dmg

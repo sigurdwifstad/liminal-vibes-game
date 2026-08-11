@@ -42,13 +42,12 @@ class LiminalVibesGame:
 
         self._last_hud_color_key: str = ""   # throttle redundant stamina-bar color writes
 
-        self._stamina_bar_x = -0.78
+        self._stamina_bar_x = -0.88
         self._stamina_bar_y = -0.45
         self._stamina_bar_w = 0.34
         self._stamina_bar_h = 0.03
         self.stamina_bg = Entity(parent=camera.ui, model="quad", position=Vec3(self._stamina_bar_x, self._stamina_bar_y, 0), scale=Vec3(self._stamina_bar_w, self._stamina_bar_h, 1), color=color.rgba(18, 18, 18, 180), origin=(-0.5, 0.5))
         self.stamina_fill = Entity(parent=camera.ui, model="quad", position=Vec3(self._stamina_bar_x, self._stamina_bar_y, -0.001), scale=Vec3(self._stamina_bar_w, self._stamina_bar_h * 0.82, 1), color=color.rgb(110, 210, 120), origin=(-0.5, 0.5))
-        self.stamina_label = Text(parent=camera.ui, text="STAMINA", position=(-0.94, -0.44), scale=0.9, color=color.rgb(240, 240, 235))
 
         self.test_hud = Text(
             parent=camera.ui,
@@ -271,7 +270,6 @@ class LiminalVibesGame:
         is_running = self.ui.run.running
         self.stamina_bg.enabled = is_running
         self.stamina_fill.enabled = is_running
-        self.stamina_label.enabled = is_running
 
         ratio = self.player.stamina_ratio
         self.stamina_fill.scale_x = self._stamina_bar_w * max(0.001, ratio)
