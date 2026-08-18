@@ -439,6 +439,217 @@ class TestCoreLogic(unittest.TestCase):
 
         mock_pick.assert_not_called()
 
+    def test_level_7_is_an_open_field_with_a_gated_pyramid_door(self):
+        try:
+            from maze import MazeManager
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+
+        maze = MazeManager(seed=12345, level=7, cell_size=4.0, test=False)
+
+        # Open field: no interior maze walls carved anywhere except the pyramid.
+        self.assertIsNotNone(maze.pyramid_center_cell)
+        self.assertIsNotNone(maze.pyramid_monster_cell)
+        self.assertEqual(maze.player_spawn_rotation_y, 0.0)
+        self.assertTrue(maze.is_walkable_cell(maze.start_cell))
+        self.assertTrue(maze.is_walkable_cell(maze.exit_cell))
+        # The pyramid's front face is a solid wall (blocking, not walkable).
+        self.assertFalse(maze.is_walkable_cell(maze.exit_wall_cell))
+        self.assertFalse(maze.is_walkable_cell(maze.pyramid_center_cell))
+
+        # The monster stands between the player's start and the pyramid's door.
+        start_to_door = abs(maze.exit_wall_cell[1] - maze.start_cell[1])
+        start_to_monster = abs(maze.pyramid_monster_cell[1] - maze.start_cell[1])
+        monster_to_door = abs(maze.exit_wall_cell[1] - maze.pyramid_monster_cell[1])
+        self.assertLess(start_to_monster, start_to_door)
+        self.assertGreater(monster_to_door, 0)
+
+        # The door is locked until `unlock_pyramid_door()` is called.
+        self.assertFalse(maze.door_unlocked)
+        exit_wx, exit_wz = maze.world_from_cell(maze.exit_cell)
+        from ursina import Vec3
+
+        at_the_door = Vec3(exit_wx, 0.0, exit_wz + 1.9)
+        self.assertFalse(maze.player_reached_exit(at_the_door))
+
+        maze.unlock_pyramid_door()
+        self.assertTrue(maze.door_unlocked)
+        self.assertTrue(maze.player_reached_exit(at_the_door))
+
+        # Calling it again is a harmless no-op.
+        maze.unlock_pyramid_door()
+        self.assertTrue(maze.door_unlocked)
+
+    def test_spider_is_disabled_on_level_7(self):
+        try:
+            from maze import MazeManager
+            from spider_monster import SpiderController
+            from ursina import Vec3
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+            from spider_monster import SpiderController
+            from ursina import Vec3
+
+        maze = MazeManager(seed=12345, level=7, cell_size=4.0, test=False)
+        spider = SpiderController(position=Vec3(0, -1000, 0))
+        spider.spawn_delay_seconds = 0.0
+
+        player_x, player_z = maze.world_from_cell(maze.start_cell)
+        self.assertFalse(spider.update_spider(maze, Vec3(player_x, 0.0, player_z), 0.0, level=7))
+        self.assertFalse(spider.spawned)
+
+    def test_crucified_monster_on_level_7_is_giant_static_and_non_lethal(self):
+        try:
+            from maze import MazeManager
+            from monster import MonsterController
+            from ursina import Vec3
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+            from monster import MonsterController
+            from ursina import Vec3
+
+        maze = MazeManager(seed=12345, level=7, cell_size=4.0, test=False)
+        monster = MonsterController(position=Vec3(0, -1000, 0))
+        monster.reset()
+
+        monster_x, monster_z = maze.world_from_cell(maze.pyramid_monster_cell)
+        pyramid_x, pyramid_z = maze.world_from_cell(maze.pyramid_center_cell)
+        monster.place_crucified(Vec3(monster_x, 0.0, monster_z), facing_position=Vec3(pyramid_x, 0.0, pyramid_z))
+
+        self.assertTrue(monster.static_crucified)
+        self.assertEqual(
+            (monster.scale.x, monster.scale.y, monster.scale.z),
+            (monster.crucified_scale, monster.crucified_scale, monster.crucified_scale),
+        )
+
+        before_position = monster.position
+        # Even standing right on top of the player, and even with catching enabled,
+        # the crucified monster never catches or moves.
+        with patch("monster.time.dt", 1.0):
+            caught = monster.update_monster(
+                maze,
+                Vec3(monster_x, 0.0, monster_z),
+                999999.0,
+                can_catch_player=True,
+                level=7,
+            )
+        self.assertFalse(caught)
+        self.assertEqual(monster.position, before_position)
+        self.assertEqual(monster.current_speed, 0.0)
+
+        monster.reset()
+        self.assertFalse(monster.static_crucified)
+        self.assertEqual((monster.scale.x, monster.scale.y, monster.scale.z), (1.0, 1.0, 1.0))
+
+    def test_einkvan_sequence_unlocks_door_after_the_fourth_clip(self):
+        try:
+            from audio import AudioManager
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from audio import AudioManager
+
+        class _FakeChannel:
+            def __init__(self):
+                self.busy = True
+
+            def set_volume(self, *_args, **_kwargs):
+                return None
+
+            def play(self, *_args, **_kwargs):
+                self.busy = True
+
+            def get_busy(self):
+                return self.busy
+
+            def stop(self, *_args, **_kwargs):
+                self.busy = False
+
+        with patch("audio.pygame.mixer.init"):
+            manager = AudioManager()
+        manager.available = True
+        manager.einkvan_sounds = [object(), object(), object(), object()]
+
+        channel = _FakeChannel()
+        fake_clock = {"now": 1000.0}
+
+        def fake_monotonic():
+            return fake_clock["now"]
+
+        with patch("audio.pygame.mixer.find_channel", return_value=channel), patch("audio.pygame.mixer.set_num_channels"), patch(
+            "audio.time.monotonic", side_effect=fake_monotonic
+        ):
+            manager.start_einkvan_sequence()
+            self.assertFalse(manager.einkvan_sequence_finished)
+
+            # No clip plays during the silent lead-in.
+            self.assertFalse(manager.update_einkvan_sequence())
+            self.assertEqual(manager._einkvan_index, -1)
+            fake_clock["now"] += manager.einkvan_lead_in_seconds - 0.01
+            self.assertFalse(manager.update_einkvan_sequence())
+            self.assertEqual(manager._einkvan_index, -1)
+
+            # Once the lead-in elapses, the first clip starts.
+            fake_clock["now"] += 0.02
+            self.assertFalse(manager.update_einkvan_sequence())
+            self.assertEqual(manager._einkvan_index, 0)
+
+            # While a clip is still playing, updates are no-ops.
+            self.assertFalse(manager.update_einkvan_sequence())
+            self.assertFalse(manager.update_einkvan_sequence())
+
+            # Each time the "current" clip finishes, the sequence advances.
+            channel.busy = False
+            self.assertFalse(manager.update_einkvan_sequence())  # clip 1 -> clip 2
+            channel.busy = False
+            self.assertFalse(manager.update_einkvan_sequence())  # clip 2 -> clip 3
+            channel.busy = False
+            self.assertFalse(manager.update_einkvan_sequence())  # clip 3 -> clip 4
+            channel.busy = False
+            self.assertTrue(manager.update_einkvan_sequence())  # clip 4 finished
+            self.assertTrue(manager.einkvan_sequence_finished)
+
+            # Further polling stays finished and doesn't replay anything.
+            self.assertFalse(manager.update_einkvan_sequence())
+
+    def test_dark_drone_loop_starts_and_stops(self):
+        try:
+            from audio import AudioManager
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from audio import AudioManager
+
+        class _FakeChannel:
+            def set_volume(self, *_args, **_kwargs):
+                return None
+
+            def play(self, *_args, **_kwargs):
+                return None
+
+            def stop(self, *_args, **_kwargs):
+                return None
+
+        with patch("audio.pygame.mixer.init"):
+            manager = AudioManager()
+        manager.available = True
+        manager.dark_drone_sound = object()
+
+        with patch("audio.pygame.mixer.find_channel", return_value=_FakeChannel()), patch(
+            "audio.pygame.mixer.set_num_channels"
+        ):
+            manager.play_dark_drone_loop()
+            self.assertTrue(manager.dark_drone_playing)
+
+            # Calling it again while already playing doesn't restart it.
+            manager.play_dark_drone_loop()
+            self.assertTrue(manager.dark_drone_playing)
+
+            manager.stop_dark_drone_loop()
+            self.assertFalse(manager.dark_drone_playing)
+            self.assertIsNone(manager.dark_drone_channel)
+
     def test_spider_catch_drains_without_game_over(self):
         try:
             from main import LiminalVibesGame

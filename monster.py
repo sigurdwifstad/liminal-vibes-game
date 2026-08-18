@@ -51,6 +51,10 @@ class MonsterController(Entity):
         self.audio = get_audio_manager()
         self._was_visible_to_player = False
         self._was_reaching_close = False
+        # Level 7's giant, motionless "crucified" monster: silent, non-lethal, and
+        # unaffected by the regular AI/animation/audio logic below.
+        self.static_crucified = False
+        self.crucified_scale = 6.0
         self._build_visual()
 
     def _noisy_black_texture(self, key: str, size: int = 24, base: int = 10, jitter: int = 10) -> Texture:
@@ -175,12 +179,15 @@ class MonsterController(Entity):
         # Stagger path refreshes against other AI to reduce frame spikes.
         self.path_refresh_timer = self.path_refresh_interval * 0.25
         self.position = Vec3(0, -1000, 0)
+        self.scale = 1.0
         self.current_speed = 0.0
         self.would_catch_player = False
         self.walk_anim_phase = 0.0
         self.teleport_timer = self.teleport_cooldown
         self._was_visible_to_player = False
         self._was_reaching_close = False
+        self.static_crucified = False
+        self._reset_arm_transforms()
         self._set_limb_pose(0.0, 0.0)
 
     def place_at(self, position: Vec3, run_elapsed: float = 0.0) -> None:
@@ -196,7 +203,65 @@ class MonsterController(Entity):
         self.teleport_timer = self.teleport_cooldown
         self._was_visible_to_player = False
         self._was_reaching_close = False
+        self._reset_arm_transforms()
         self._set_limb_pose(0.0, 0.0)
+
+    def _reset_arm_transforms(self) -> None:
+        """Restore arms to their default hanging pose/rotation. Needed because
+        the level-7 crucified pose rotates the arms on the Z axis, which
+        _set_limb_pose (used by normal reset/placement) never touches."""
+        if self.left_arm is not None:
+            self.left_arm.rotation = Vec3(0, 0, 0)
+            self.left_arm.position = self.left_arm_default_position
+            self.left_arm.scale = self.left_arm_default_scale
+        if self.right_arm is not None:
+            self.right_arm.rotation = Vec3(0, 0, 0)
+            self.right_arm.position = self.right_arm_default_position
+            self.right_arm.scale = self.right_arm_default_scale
+
+    def place_crucified(self, position: Vec3, facing_position: Vec3 | None = None) -> None:
+        """Place the level-7 giant monster: static, silent, non-lethal, arms
+        stretched out to the sides as if crucified, standing in front of the
+        distant pyramid."""
+        self.position = position
+        self.scale = self.crucified_scale
+        self.spawned = True
+        self.visible = True
+        self.enabled = True
+        self.static_crucified = True
+        self.would_catch_player = False
+        self.current_speed = 0.0
+        self.walk_anim_phase = 0.0
+        self.path_cells.clear()
+        self.path_refresh_timer = float("inf")
+        self.teleport_timer = float("inf")
+        self._was_visible_to_player = False
+        self._was_reaching_close = False
+
+        if facing_position is not None:
+            to_target = Vec3(facing_position.x - position.x, 0.0, facing_position.z - position.z)
+            if to_target.length() > 0.001:
+                self.rotation_y = math.degrees(math.atan2(to_target.x, to_target.z))
+
+        # Arms extended straight out to the sides instead of the regular
+        # swinging/reaching pose, attached at the shoulders (top of the torso,
+        # just below the head) rather than hanging from mid-torso.
+        torso_half_width = 0.225  # body scale.x / 2
+        shoulder_y = 1.86
+        arm_length = self.left_arm_default_scale.y
+        arm_reach = torso_half_width + (arm_length * 0.5)
+        if self.left_arm is not None:
+            self.left_arm.rotation = Vec3(0, 0, -90)
+            self.left_arm.position = Vec3(-arm_reach, shoulder_y, 0.0)
+            self.left_arm.scale = self.left_arm_default_scale
+        if self.right_arm is not None:
+            self.right_arm.rotation = Vec3(0, 0, 90)
+            self.right_arm.position = Vec3(arm_reach, shoulder_y, 0.0)
+            self.right_arm.scale = self.right_arm_default_scale
+        if self.left_leg is not None:
+            self.left_leg.rotation_x = 0.0
+        if self.right_leg is not None:
+            self.right_leg.rotation_x = 0.0
 
     def _is_visible_to_player(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, target_position: Vec3) -> bool:
         player_cell = maze.cell_from_world(player_position)
@@ -308,6 +373,11 @@ class MonsterController(Entity):
         can_catch_player: bool = True,
         level: int = 1,
     ) -> bool:
+        if self.static_crucified:
+            # Level 7's giant monster is a motionless, silent set piece: it never
+            # moves, screams, or catches the player.
+            return False
+
         if not self.spawned and run_elapsed >= self.spawn_delay_seconds:
             self._rng.seed(maze.seed + int(run_elapsed * 1000.0))
             spawn_cell = self._pick_hidden_cell(maze, player_position, player_forward, min_dist=8, max_dist=32)

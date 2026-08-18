@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import random
 
-from ursina import AmbientLight, PointLight, Entity, Text, Ursina, Vec3, application, camera, color, destroy, scene, time, window
+from ursina import AmbientLight, DirectionalLight, PointLight, Entity, Text, Ursina, Vec3, application, camera, color, destroy, scene, time, window
 
 from audio import get_audio_manager
 from core_logic import format_mmss
@@ -39,6 +39,7 @@ class LiminalVibesGame:
         self.ui = GameStateUI()
         self.audio = get_audio_manager()
         self.point_lights: list[PointLight] = []
+        self.sun_light: DirectionalLight | None = None
 
         self._last_hud_color_key: str = ""   # throttle redundant stamina-bar color writes
 
@@ -64,7 +65,7 @@ class LiminalVibesGame:
     def _setup_lighting(self) -> None:
         scene.fog_density = (20, 130)
         scene.fog_color = color.rgb(195, 195, 170)
-        AmbientLight(color=color.rgba(214, 212, 202, 1e-6))
+        AmbientLight(color=color.rgba(214, 212, 202, 0.2))
 
     @staticmethod
     def _clamp_lamp_brightness(value: float) -> float:
@@ -156,6 +157,7 @@ class LiminalVibesGame:
         seed = self._random_seed()
         self.maze = MazeManager(seed=seed, level=self.level, cell_size=4.0, test=self.test)
         self._setup_point_lights_from_lamps()
+        self._setup_level7_sun_light()
 
         if self.player is None:
             self.player = PlayerController(position=Vec3(0, 0, 0))
@@ -171,7 +173,14 @@ class LiminalVibesGame:
         if self.monster is None:
             self.monster = MonsterController(position=Vec3(0, -1000, 0))
         self.monster.reset()
-        if self.level == 5 and self.maze.monster_start_cell is not None:
+        if self.level == 7 and self.maze.pyramid_monster_cell is not None:
+            self.monster.spawn_delay_seconds = float("inf")
+            mx, mz = self.maze.world_from_cell(self.maze.pyramid_monster_cell)
+            sx, sz = self.maze.world_from_cell(self.maze.start_cell)
+            # Face the monster toward the player's approach (away from the
+            # pyramid), so it looms over them front-on rather than showing its back.
+            self.monster.place_crucified(Vec3(mx, 0.0, mz), facing_position=Vec3(sx, 0.0, sz))
+        elif self.level == 5 and self.maze.monster_start_cell is not None:
             self.monster.spawn_delay_seconds = float("inf")
             mx, mz = self.maze.world_from_cell(self.maze.monster_start_cell)
             self.monster.place_at(Vec3(mx, 0.0, mz))
@@ -182,11 +191,33 @@ class LiminalVibesGame:
             self.spider = SpiderController(position=Vec3(0, -1000, 0))
         self._spider_drained_this_encounter = False
         self.spider.reset()
-        self.spider.spawn_delay_seconds = float("inf") if self.level == 5 else (0.0 if self.test else 40.0)
+        self.spider.spawn_delay_seconds = float("inf") if self.level in (5, 7) else (0.0 if self.test else 40.0)
         self.ui.set_level(self.level)
 
         if self.level == 5:
             self.audio.play_intense_sequence()
+        elif self.level == 7:
+            self.audio.stop_ambient()
+            self.audio.play_dark_drone_loop()
+            self.audio.start_einkvan_sequence()
+        else:
+            if self.audio.dark_drone_playing:
+                self.audio.stop_dark_drone_loop()
+            self.audio.play_ambient_loop()
+
+    def _setup_level7_sun_light(self) -> None:
+        if self.sun_light is not None:
+            destroy(self.sun_light)
+            self.sun_light = None
+
+        if self.maze is None or self.level != 7:
+            return
+
+        # Level 7 is a wide-open outdoor space with no lamps, so it needs its own
+        # broad "sky" light instead of the lamp point lights used indoors.
+        self.sun_light = DirectionalLight(shadows=False)
+        self.sun_light.color = color.rgb(232, 224, 198)
+        self.sun_light.rotation = Vec3(48, -35, 0)
 
     def _restore_player_camera(self) -> None:
         if self.player is None:
@@ -224,35 +255,39 @@ class LiminalVibesGame:
                 self._advance_level()
                 return
 
-            caught = self.monster.update_monster(
-                self.maze,
-                self.player.world_position,
-                self.ui.run.survival_seconds,
-                self.player.forward,
-                can_catch_player=not level_test_mode,
-                level=self.level,
-            )
-            if caught:
-                self.player.set_active(False)
-                self._show_death_closeup()
-                self.ui.on_player_caught()
-                return
-
-            if self.level != 5:
-                spider_drains = self.spider.update_spider(
+            if self.level == 7:
+                if self.audio.update_einkvan_sequence():
+                    self.maze.unlock_pyramid_door()
+            else:
+                caught = self.monster.update_monster(
                     self.maze,
                     self.player.world_position,
                     self.ui.run.survival_seconds,
                     self.player.forward,
+                    can_catch_player=not level_test_mode,
                     level=self.level,
                 )
-                if spider_drains and not self._spider_drained_this_encounter:
-                    self._spider_drained_this_encounter = True
-                    self.player.stamina = 0.0
-                    self.player.exhausted = True
+                if caught:
+                    self.player.set_active(False)
+                    self._show_death_closeup()
+                    self.ui.on_player_caught()
                     return
-                elif not spider_drains:
-                    self._spider_drained_this_encounter = False
+
+                if self.level != 5:
+                    spider_drains = self.spider.update_spider(
+                        self.maze,
+                        self.player.world_position,
+                        self.ui.run.survival_seconds,
+                        self.player.forward,
+                        level=self.level,
+                    )
+                    if spider_drains and not self._spider_drained_this_encounter:
+                        self._spider_drained_this_encounter = True
+                        self.player.stamina = 0.0
+                        self.player.exhausted = True
+                        return
+                    elif not spider_drains:
+                        self._spider_drained_this_encounter = False
         self._update_hud()
 
     # Precomputed stamina bar colors – avoids allocating new color objects every frame.

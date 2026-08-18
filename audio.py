@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import random
+import time
 from typing import Optional
 
 import pygame
@@ -36,6 +37,8 @@ class AudioManager:
             self.spider_walking_sound = None
             self.spider_attack_sound = None
             self.intense_sequence_sound = None
+            self.dark_drone_sound = None
+            self.einkvan_sounds = []
             self.ambient_channel = None
             self.footstep_channel = None
             self.monster_appearing_channel = None
@@ -43,13 +46,20 @@ class AudioManager:
             self.spider_walking_channel = None
             self.spider_attack_channel = None
             self.intense_sequence_channel = None
+            self.dark_drone_channel = None
+            self.einkvan_channel = None
             self.footstep_sprint_sound = None
             self.footstep_sprinting = False
             self._last_monster_scream_index = None
             self.ambient_playing = False
             self.footstep_playing = False
             self.spider_walking_playing = False
-            self.monster_appearing_cooldown_seconds = 30.0
+            self.dark_drone_playing = False
+            self._einkvan_index = -1
+            self.einkvan_sequence_finished = False
+            self._einkvan_start_at: Optional[float] = None
+            self.einkvan_lead_in_seconds = 10.0
+            self.monster_appearing_cooldown_seconds = 10.0
             self.last_monster_appearing_at = None
             self.monster_scream_cooldown_seconds = 2.8
             self.last_monster_scream_at = None
@@ -83,8 +93,17 @@ class AudioManager:
         self.spider_attack_sound = None
         self.intense_sequence_channel = None
         self.intense_sequence_sound = None
+        self.dark_drone_channel = None
+        self.dark_drone_sound = None
+        self.dark_drone_playing = False
+        self.einkvan_channel = None
+        self.einkvan_sounds = []
+        self._einkvan_index = -1
+        self.einkvan_sequence_finished = False
+        self._einkvan_start_at: Optional[float] = None
+        self.einkvan_lead_in_seconds = 10.0
         self._last_monster_scream_index: Optional[int] = None
-        self.monster_appearing_cooldown_seconds = 30.0
+        self.monster_appearing_cooldown_seconds = 10.0
         self.last_monster_appearing_at: Optional[float] = None
         self.monster_scream_cooldown_seconds = 2.8
         self.last_monster_scream_at: Optional[float] = None
@@ -167,6 +186,27 @@ class AudioManager:
             else:
                 print(f"Warning: Intense sequence sound not found at {intense_sequence_path}")
                 self.intense_sequence_sound = None
+
+            dark_drone_path = self.resources_path / "dark_drone.mp3"
+            if dark_drone_path.exists():
+                self.dark_drone_sound = pygame.mixer.Sound(str(dark_drone_path))
+                self.dark_drone_sound.set_volume(self.sfx_volume*1.5)  # Slightly louder for ambience
+                print(f"Loaded dark drone sound from {dark_drone_path}")
+            else:
+                print(f"Warning: Dark drone sound not found at {dark_drone_path}")
+                self.dark_drone_sound = None
+
+            self.einkvan_sounds = []
+            for index in range(1, 5):
+                einkvan_path = self.resources_path / f"einkvan_{index}.wav"
+                if not einkvan_path.exists():
+                    print(f"Warning: Einkvan sound not found at {einkvan_path}")
+                    continue
+
+                einkvan_sound = pygame.mixer.Sound(str(einkvan_path))
+                einkvan_sound.set_volume(self.sfx_volume)
+                self.einkvan_sounds.append(einkvan_sound)
+                print(f"Loaded einkvan sound from {einkvan_path}")
         except Exception as e:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
@@ -177,6 +217,8 @@ class AudioManager:
             self.spider_walking_sound = None
             self.spider_attack_sound = None
             self.intense_sequence_sound = None
+            self.dark_drone_sound = None
+            self.einkvan_sounds = []
 
     def _current_footstep_sound(self):
         if self.footstep_sprinting and self.footstep_sprint_sound is not None:
@@ -354,6 +396,106 @@ class AudioManager:
         self.spider_walking_playing = False
         self.spider_walking_channel = None
 
+    def play_dark_drone_loop(self) -> None:
+        """Start looping the level-7 dark drone ambience without restarting
+        when it's already playing."""
+        if not self.available or self.dark_drone_sound is None:
+            return
+
+        if not self.dark_drone_playing:
+            try:
+                channel = pygame.mixer.find_channel()
+                if channel is None:
+                    pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                    channel = pygame.mixer.find_channel()
+
+                if channel is not None:
+                    channel.set_volume(self.sfx_volume)
+                    channel.play(self.dark_drone_sound, loops=-1)
+                    self.dark_drone_channel = channel
+                    self.dark_drone_playing = True
+                else:
+                    print("Warning: Could not find available audio channel for dark drone")
+            except Exception as e:
+                print(f"Warning: Failed to play dark drone loop: {e}")
+
+    def stop_dark_drone_loop(self) -> None:
+        """Stop the looping level-7 dark drone ambience."""
+        if self.dark_drone_channel is not None:
+            try:
+                self.dark_drone_channel.stop()
+            except Exception as e:
+                print(f"Warning: Failed to stop dark drone loop: {e}")
+        self.dark_drone_playing = False
+        self.dark_drone_channel = None
+
+    def start_einkvan_sequence(self) -> None:
+        """Arm the level-7 einkvan_1..4 sequence. Playback of the first clip is
+        delayed by `einkvan_lead_in_seconds` of silence; call
+        `update_einkvan_sequence()` every frame to advance it."""
+        self._einkvan_index = -1
+        self.einkvan_sequence_finished = False
+        if self.einkvan_channel is not None:
+            try:
+                self.einkvan_channel.stop()
+            except Exception as e:
+                print(f"Warning: Failed to stop einkvan sequence: {e}")
+        self.einkvan_channel = None
+        self._einkvan_start_at = time.monotonic() + self.einkvan_lead_in_seconds
+
+    def _advance_einkvan_sequence(self) -> None:
+        if not self.available or not self.einkvan_sounds:
+            self.einkvan_sequence_finished = True
+            return
+
+        self._einkvan_index += 1
+        if self._einkvan_index >= len(self.einkvan_sounds):
+            self.einkvan_sequence_finished = True
+            self.einkvan_channel = None
+            return
+
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+
+            if channel is None:
+                print("Warning: Could not find available audio channel for einkvan sequence")
+                self.einkvan_sequence_finished = True
+                return
+
+            channel.set_volume(self.sfx_volume)
+            channel.play(self.einkvan_sounds[self._einkvan_index])
+            self.einkvan_channel = channel
+        except Exception as e:
+            print(f"Warning: Failed to play einkvan sequence clip: {e}")
+            self.einkvan_sequence_finished = True
+
+    def update_einkvan_sequence(self) -> bool:
+        """Poll the einkvan sequence once per frame. Waits out the initial
+        silent lead-in, then advances to the next clip when the current one
+        finishes, returning True exactly once: the frame the final clip
+        finishes playing."""
+        if self.einkvan_sequence_finished:
+            return False
+
+        if self._einkvan_index < 0:
+            if self._einkvan_start_at is None:
+                return False
+            if time.monotonic() < self._einkvan_start_at:
+                return False
+            self._einkvan_start_at = None
+            self._advance_einkvan_sequence()
+            return self.einkvan_sequence_finished
+
+        channel_busy = self.einkvan_channel is not None and self.einkvan_channel.get_busy()
+        if channel_busy:
+            return False
+
+        self._advance_einkvan_sequence()
+        return self.einkvan_sequence_finished
+
     def play_monster_appearing(self, current_time: float) -> bool:
         """Play the monster-appearing stinger if its cooldown has elapsed."""
         if not self.available or self.monster_appearing_sound is None:
@@ -479,6 +621,7 @@ class AudioManager:
             self.stop_ambient()
             self.stop_footstep_loop()
             self.stop_spider_walking_loop()
+            self.stop_dark_drone_loop()
             try:
                 pygame.mixer.quit()
             except Exception:

@@ -306,7 +306,7 @@ class SpiderController(Entity):
         """
         Update spider behavior. Returns True if spider caught the player (drained stamina).
         """
-        if level == 5:
+        if level in (5, 7):
             self.audio.stop_spider_walking_loop()
             return False
 

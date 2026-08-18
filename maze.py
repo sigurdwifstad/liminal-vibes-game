@@ -6,7 +6,7 @@ from collections import deque
 from typing import Iterable, List, Set, Tuple
 
 from panda3d.core import PNMImage, Texture as PandaTexture
-from ursina import Entity, Texture, Vec3, color, destroy
+from ursina import Entity, Mesh, Texture, Vec3, color, destroy
 
 from core_logic import touches_exit_portal
 
@@ -30,6 +30,15 @@ class MazeManager:
         self.exit_direction: Cell = (1, 0)
         self.monster_start_cell: Cell | None = None
         self.player_spawn_rotation_y: float = 0.0
+        # Level 7 ("The Pyramid") special-level state: a giant static monster stands
+        # in front of a distant pyramid, and the exit door on the pyramid's front
+        # face only appears once the level's audio cue has finished (see main.py).
+        self.pyramid_center_cell: Cell | None = None
+        self.pyramid_monster_cell: Cell | None = None
+        self.door_unlocked: bool = False
+        self._pyramid_radius: int = 0
+        self._pyramid_base_height: float = 0.0
+        self._pyramid_front_wall_entity: Entity | None = None
         self.wall_height = 3.0
         self.exit_portal_height = 2.0
         self.exit_portal_width_ratio = 1.0 / 3.0
@@ -66,6 +75,8 @@ class MazeManager:
             return 9
         elif self.level == 5:
             return 35
+        elif self.level == 7:
+            return 101
         else:
             return 17
 
@@ -204,6 +215,9 @@ class MazeManager:
             self.exit_wall_cell = (self.exit_cell[0], self.exit_cell[1] + 1)
             return walkable
 
+        if self.level == 7:
+            return self._generate_level7_layout()
+
         grid = [[False for _ in range(self.grid_size)] for _ in range(self.grid_size)]
         rng = random.Random(f"{self.seed}|level|{self.level}")
         stack = [(1, 1)]
@@ -232,6 +246,43 @@ class MazeManager:
             for lx in range(self.grid_size):
                 if grid[lz][lx]:
                     walkable.add(self._global_from_local(lx, lz))
+        return walkable
+
+    def _generate_level7_layout(self) -> Set[Cell]:
+        """Open-field layout for level 7 ("The Pyramid"): a single giant walkable
+        plane (no interior maze walls) with a solid pyramid structure sitting in
+        the distance. The pyramid's front face starts out as a plain solid wall
+        and only becomes an exit once `unlock_pyramid_door()` is called."""
+        half = self.half_grid
+        center_local = self.grid_size // 2
+        radius = max(1, min(12, half - 12))
+        front_offset = radius + 8  # the giant monster stands this many cells south of the front face
+        start_offset = max(front_offset + 2, min(half - 2, front_offset + 25))
+
+        pyramid_local = (center_local, center_local)
+        front_face_local = (center_local, center_local - radius)
+        monster_local = (center_local, center_local - front_offset)
+        start_local = (center_local, center_local - start_offset)
+
+        walkable: Set[Cell] = set()
+        for lz in range(1, self.grid_size - 1):
+            for lx in range(1, self.grid_size - 1):
+                walkable.add(self._global_from_local(lx, lz))
+
+        self.pyramid_center_cell = self._global_from_local(*pyramid_local)
+        for dz in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                walkable.discard((self.pyramid_center_cell[0] + dx, self.pyramid_center_cell[1] + dz))
+
+        self._pyramid_radius = radius
+        self.pyramid_monster_cell = self._global_from_local(*monster_local)
+        self.start_cell = self._global_from_local(*start_local)
+        self.monster_start_cell = None
+        self.player_spawn_rotation_y = 0.0
+        self.exit_direction = (0, 1)
+        self.exit_wall_cell = self._global_from_local(*front_face_local)
+        self.exit_cell = (self.exit_wall_cell[0], self.exit_wall_cell[1] - 1)
+        self.door_unlocked = False
         return walkable
 
     def _pick_farthest_cell(self, start: Cell) -> Cell:
@@ -363,7 +414,186 @@ class MazeManager:
             rotation_z=tape_rng.uniform(-0.35, 0.35),
         )
 
+    def _build_pyramid_front_wall(self, x: float, z: float, height: float, y_base: float, cell: Cell) -> None:
+        """Plain solid wall segment covering the pyramid's front face until the
+        exit door is unlocked (see `unlock_pyramid_door`)."""
+        wall_entity = Entity(
+            model="cube",
+            position=Vec3(x, y_base + height * 0.5, z),
+            scale=Vec3(self.cell_size, height, self.cell_size),
+            color=self.wall_surface_color,
+            texture=self.wall_texture,
+            texture_scale=(1.0, height / self.wall_height * 1.4),
+        )
+        self.entities.append(wall_entity)
+        self._wall_entities[cell] = wall_entity
+        self._pyramid_front_wall_entity = wall_entity
+
+    def _add_cube_to_mesh(
+        self,
+        vertices: list[tuple[float, float, float]],
+        triangles: list[int],
+        uvs: list[tuple[float, float]],
+        normals: list[tuple[float, float, float]],
+        center_x: float,
+        center_y: float,
+        center_z: float,
+        scale_x: float,
+        scale_y: float,
+        scale_z: float,
+    ) -> None:
+        hx = scale_x * 0.5
+        hy = scale_y * 0.5
+        hz = scale_z * 0.5
+        face_defs = (
+            ((0.0, 0.0, -1.0), ((-hx, -hy, -hz), (hx, -hy, -hz), (hx, hy, -hz), (-hx, hy, -hz))),
+            ((0.0, 0.0, 1.0), ((-hx, -hy, hz), (-hx, hy, hz), (hx, hy, hz), (hx, -hy, hz))),
+            ((-1.0, 0.0, 0.0), ((-hx, -hy, -hz), (-hx, hy, -hz), (-hx, hy, hz), (-hx, -hy, hz))),
+            ((1.0, 0.0, 0.0), ((hx, -hy, -hz), (hx, -hy, hz), (hx, hy, hz), (hx, hy, -hz))),
+            ((0.0, 1.0, 0.0), ((-hx, hy, -hz), (hx, hy, -hz), (hx, hy, hz), (-hx, hy, hz))),
+            ((0.0, -1.0, 0.0), ((-hx, -hy, -hz), (-hx, -hy, hz), (hx, -hy, hz), (hx, -hy, -hz))),
+        )
+
+        for normal, face_vertices in face_defs:
+            face_start = len(vertices)
+            for dx, dy, dz in face_vertices:
+                vertices.append((center_x + dx, center_y + dy, center_z + dz))
+                normals.append(normal)
+            uvs.extend(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+            triangles.extend(
+                (
+                    face_start,
+                    face_start + 1,
+                    face_start + 2,
+                    face_start,
+                    face_start + 2,
+                    face_start + 3,
+                )
+            )
+
+    def _build_pyramid_tier(self, radius: float, y_base: float, block_height: float, track_walls: bool) -> None:
+        """Build one terrace of the ziggurat from batched cube geometry.
+
+        The blocks stay the same size as normal walls, but the terrace edges are
+        offset by half a cell between layers, which makes the pyramid feel
+        tighter without multiplying draw calls."""
+        assert self.pyramid_center_cell is not None
+        spacing = 0.5
+        steps = int(round((radius * 2) / spacing))
+        offsets = [(-radius + index * spacing) for index in range(steps + 1)]
+        vertices: list[tuple[float, float, float]] = []
+        triangles: list[int] = []
+        uvs: list[tuple[float, float]] = []
+        normals: list[tuple[float, float, float]] = []
+        front_cell = self.exit_wall_cell if track_walls and math.isclose(radius, float(self._pyramid_radius)) else None
+
+        for z_index, z_offset in enumerate(offsets):
+            for x_index, x_offset in enumerate(offsets):
+                if front_cell is not None and math.isclose(x_offset, 0.0) and math.isclose(z_offset, -radius):
+                    x, z = self.world_from_cell(front_cell)
+                    self._build_pyramid_front_wall(x, z, block_height, y_base, front_cell)
+                    continue
+
+                center_x, center_z = self.world_from_cell(
+                    (self.pyramid_center_cell[0] + x_offset, self.pyramid_center_cell[1] + z_offset)
+                )
+                self._add_cube_to_mesh(
+                    vertices,
+                    triangles,
+                    uvs,
+                    normals,
+                    center_x,
+                    y_base + block_height * 0.5,
+                    center_z,
+                    self.cell_size,
+                    block_height,
+                    self.cell_size,
+                )
+
+        mesh = Mesh(vertices=vertices, triangles=triangles, uvs=uvs, normals=normals, mode="triangle")
+        self.entities.append(
+            Entity(
+                model=mesh,
+                color=self.wall_surface_color,
+                texture=self.wall_texture,
+            )
+        )
+
+    def _build_pyramid(self) -> None:
+        assert self.pyramid_center_cell is not None
+        radius = max(1, self._pyramid_radius or 12)
+
+        # Stepped ("ziggurat") terraces, each narrower than the one below it, all
+        # built from identically-sized blocks no taller than the door (matching
+        # the game's normal wall height) rather than a handful of huge slabs.
+        block_height = self.wall_height
+        self._pyramid_base_height = block_height
+        step = 0.5
+        radii: List[int] = []
+        r = float(radius)
+        while r >= 1.0:
+            radii.append(r)
+            r -= step
+        if not radii or not math.isclose(radii[-1], 1.0):
+            radii.append(1.0)
+
+        y_cursor = 0.0
+        for index, layer_radius in enumerate(radii):
+            self._build_pyramid_tier(layer_radius, y_cursor, block_height, track_walls=(index == 0))
+            y_cursor += block_height
+
+        apex_height = block_height
+        apex_x, apex_z = self.world_from_cell(self.pyramid_center_cell)
+        self.entities.append(
+            Entity(
+                model="cube",
+                position=Vec3(apex_x, y_cursor + apex_height * 0.5, apex_z),
+                scale=Vec3(self.cell_size, apex_height, self.cell_size),
+                color=self.wall_surface_color,
+                texture=self.wall_texture,
+            )
+        )
+
+    def _build_entities_level7(self) -> None:
+        """Open field: floor only (no ceiling, no interior walls) extending into
+        the fog, plus a distant solid pyramid. Actual scene lighting for this
+        level is set up by the caller (see `LiminalVibesGame._load_level`),
+        mirroring how lamp point lights are owned outside of `MazeManager`."""
+        total_extent = (self.grid_size - 1) * self.cell_size
+        floor_entity = Entity(
+            model="cube",
+            position=Vec3(0.0, 0.0, 0.0),
+            scale=Vec3(total_extent, 0.1, total_extent),
+            color=self.floor_surface_color,
+            texture=self.floor_texture,
+            texture_scale=(total_extent / self.cell_size * 2.2, total_extent / self.cell_size * 2.2),
+        )
+        self.entities.append(floor_entity)
+
+        self._build_pyramid()
+
+    def unlock_pyramid_door(self) -> None:
+        """Reveal the exit door on the pyramid's front face. Called once the
+        level-7 einkvan audio sequence finishes playing."""
+        if self.level != 7 or self.door_unlocked:
+            return
+        self.door_unlocked = True
+
+        if self._pyramid_front_wall_entity is not None:
+            if self._pyramid_front_wall_entity in self.entities:
+                self.entities.remove(self._pyramid_front_wall_entity)
+            destroy(self._pyramid_front_wall_entity)
+            self._pyramid_front_wall_entity = None
+            self._wall_entities.pop(self.exit_wall_cell, None)
+
+        x, z = self.world_from_cell(self.exit_wall_cell)
+        self._append_exit_door_entities(x, z, self._pyramid_base_height or self.wall_height, self.exit_wall_cell)
+
     def _build_entities(self) -> None:
+        if self.level == 7:
+            self._build_entities_level7()
+            return
+
         wall_height = self.wall_height
         wall_color = self.wall_surface_color
         floor_color = self.floor_surface_color
@@ -430,7 +660,7 @@ class MazeManager:
 
     def _generate_level(self) -> None:
         self.walkable_cells = self._generate_walkable_cells()
-        if self.level != 5:
+        if self.level not in (5, 7):
             self.start_cell = self._global_from_local(1, 1)
             self.monster_start_cell = None
             self.player_spawn_rotation_y = 0.0
@@ -520,6 +750,9 @@ class MazeManager:
         return rng.choice(candidates)
 
     def player_reached_exit(self, player_position: Vec3) -> bool:
+        if self.level == 7 and not self.door_unlocked:
+            return False
+
         player_cell = self.cell_from_world(player_position)
         if player_cell not in (self.exit_cell, self.exit_wall_cell):
             return False
@@ -554,4 +787,3 @@ class MazeManager:
             if (sx, sz) not in self.walkable_cells:
                 return False
         return True
-
