@@ -194,7 +194,7 @@ class AudioManager:
             dark_drone_path = self.resources_path / "dark_drone.mp3"
             if dark_drone_path.exists():
                 self.dark_drone_sound = pygame.mixer.Sound(str(dark_drone_path))
-                self.dark_drone_sound.set_volume(self.sfx_volume*1.5)  # Slightly louder for ambience
+                self.dark_drone_sound.set_volume(self.sfx_volume*1.5)  # Slightly louder for ambiencew
                 print(f"Loaded dark drone sound from {dark_drone_path}")
             else:
                 print(f"Warning: Dark drone sound not found at {dark_drone_path}")

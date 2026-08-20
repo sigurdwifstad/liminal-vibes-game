@@ -2,6 +2,8 @@
 
 A first-person 3D liminal horror prototype built with Python + Ursina.
 
+![A strange looking, empty office building hallway](resources/LiminalVibes.jpg)
+
 ## Features
 - Finite maze levels that grow larger each time you reach the exit door in the wall.
 - Procedural textures on walls, floor, and ceiling for subtle surface detail.

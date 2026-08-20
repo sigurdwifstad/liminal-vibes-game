@@ -19,8 +19,22 @@ installer (Inno Setup .exe on Windows, .dmg on macOS).
 """
 
 import sys
+from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all
+
+ROOT = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+WINDOWS_ICON_CANDIDATES = [
+    ROOT / "resources" / "liminal-hallway-game-icon.ico",
+    ROOT / "resources" / "LiminalVibes.ico",
+]
+MACOS_ICON_CANDIDATES = [
+    ROOT / "resources" / "liminal-hallway-game-icon.icns",
+    ROOT / "resources" / "LiminalVibes.icns",
+]
+
+WINDOWS_ICON_PATH = next((str(path) for path in WINDOWS_ICON_CANDIDATES if path.exists()), None)
+MACOS_ICON_PATH = next((str(path) for path in MACOS_ICON_CANDIDATES if path.exists()), None)
 
 block_cipher = None
 
@@ -88,7 +102,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=WINDOWS_ICON_PATH,
 )
 
 # On macOS, PyInstaller recommends onedir (not onefile) when producing a
@@ -108,12 +122,13 @@ if is_macos:
     app = BUNDLE(
         coll,
         name="LiminalVibes.app",
-        icon=None,
+        icon=MACOS_ICON_PATH,
         bundle_identifier="com.liminalvibes.game",
         info_plist={
             "CFBundleName": "Liminal Vibes",
             "CFBundleDisplayName": "Liminal Vibes",
             "CFBundleShortVersionString": "1.0.0",
+            "CFBundleIconFile": Path(MACOS_ICON_PATH).name if MACOS_ICON_PATH else "LiminalVibes.icns",
             "NSHighResolutionCapable": True,
         },
     )

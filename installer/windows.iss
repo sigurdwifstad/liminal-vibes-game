@@ -28,6 +28,7 @@ OutputDir=Output
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
+SetupIconFile=..\resources\liminal-hallway-game-icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=lowest
 
