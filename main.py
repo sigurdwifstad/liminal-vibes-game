@@ -284,6 +284,8 @@ class LiminalVibesGame:
                     if spider_drains and not self._spider_drained_this_encounter:
                         self._spider_drained_this_encounter = True
                         self.player.stamina = 0.0
+                        if not self.player.exhausted:
+                            self.player.audio.play_exhausted()
                         self.player.exhausted = True
                         return
                     elif not spider_drains:

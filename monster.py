@@ -51,6 +51,10 @@ class MonsterController(Entity):
         self.audio = get_audio_manager()
         self._was_visible_to_player = False
         self._was_reaching_close = False
+        # True once (re)placed/teleported and the appearing sound hasn't played
+        # yet since then; consumed the first time the monster enters the
+        # player's line of sight.
+        self._appearing_sound_pending = True
         # Level 7's giant, motionless "crucified" monster: silent, non-lethal, and
         # unaffected by the regular AI/animation/audio logic below.
         self.static_crucified = False
@@ -186,6 +190,7 @@ class MonsterController(Entity):
         self.teleport_timer = self.teleport_cooldown
         self._was_visible_to_player = False
         self._was_reaching_close = False
+        self._appearing_sound_pending = True
         self.static_crucified = False
         self._reset_arm_transforms()
         self._set_limb_pose(0.0, 0.0)
@@ -203,6 +208,7 @@ class MonsterController(Entity):
         self.teleport_timer = self.teleport_cooldown
         self._was_visible_to_player = False
         self._was_reaching_close = False
+        self._appearing_sound_pending = True
         self._reset_arm_transforms()
         self._set_limb_pose(0.0, 0.0)
 
@@ -390,6 +396,7 @@ class MonsterController(Entity):
             self.enabled = True
             self.spawned_at = run_elapsed
             self.teleport_timer = self.teleport_cooldown
+            self._appearing_sound_pending = True
 
         if not self.spawned:
             return False
@@ -412,8 +419,9 @@ class MonsterController(Entity):
             return True
 
         is_visible = self._is_visible_to_player(maze, player_position, player_forward, self.position)
-        if is_visible and not self._was_visible_to_player:
+        if is_visible and not self._was_visible_to_player and self._appearing_sound_pending:
             self.audio.play_monster_appearing(run_elapsed)
+            self._appearing_sound_pending = False
         self._was_visible_to_player = is_visible
 
         if level != 5 and not is_visible:
@@ -424,6 +432,7 @@ class MonsterController(Entity):
                     tx, tz = maze.world_from_cell(teleport_cell)
                     self.position = Vec3(tx, 0.0, tz)
                     self.path_cells.clear()
+                    self._appearing_sound_pending = True
             if self.teleport_timer <= 0.0:
                 self.teleport_timer = self.teleport_cooldown + self._rng.uniform(-0.8, 1.0)
         elif level != 5:

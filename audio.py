@@ -39,6 +39,7 @@ class AudioManager:
             self.intense_sequence_sound = None
             self.dark_drone_sound = None
             self.einkvan_sounds = []
+            self.exhausted_sound = None
             self.ambient_channel = None
             self.footstep_channel = None
             self.monster_appearing_channel = None
@@ -48,6 +49,7 @@ class AudioManager:
             self.intense_sequence_channel = None
             self.dark_drone_channel = None
             self.einkvan_channel = None
+            self.exhausted_channel = None
             self.footstep_sprint_sound = None
             self.footstep_sprinting = False
             self._last_monster_scream_index = None
@@ -98,6 +100,8 @@ class AudioManager:
         self.dark_drone_playing = False
         self.einkvan_channel = None
         self.einkvan_sounds = []
+        self.exhausted_channel = None
+        self.exhausted_sound = None
         self._einkvan_index = -1
         self.einkvan_sequence_finished = False
         self._einkvan_start_at: Optional[float] = None
@@ -207,6 +211,15 @@ class AudioManager:
                 einkvan_sound.set_volume(self.sfx_volume)
                 self.einkvan_sounds.append(einkvan_sound)
                 print(f"Loaded einkvan sound from {einkvan_path}")
+
+            exhausted_path = self.resources_path / "exhausted.mp3"
+            if exhausted_path.exists():
+                self.exhausted_sound = pygame.mixer.Sound(str(exhausted_path))
+                self.exhausted_sound.set_volume(self.sfx_volume)
+                print(f"Loaded exhausted sound from {exhausted_path}")
+            else:
+                print(f"Warning: Exhausted sound not found at {exhausted_path}")
+                self.exhausted_sound = None
         except Exception as e:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
@@ -219,6 +232,7 @@ class AudioManager:
             self.intense_sequence_sound = None
             self.dark_drone_sound = None
             self.einkvan_sounds = []
+            self.exhausted_sound = None
 
     def _current_footstep_sound(self):
         if self.footstep_sprinting and self.footstep_sprint_sound is not None:
@@ -497,14 +511,13 @@ class AudioManager:
         return self.einkvan_sequence_finished
 
     def play_monster_appearing(self, current_time: float) -> bool:
-        """Play the monster-appearing stinger if its cooldown has elapsed."""
+        """Play the monster-appearing stinger.
+
+        Gating is handled by the caller based on teleport state (the sound
+        should play once per teleport, the first time the monster re-enters
+        the player's line of sight), not by a time-based cooldown.
+        """
         if not self.available or self.monster_appearing_sound is None:
-            return False
-        if not can_play_after_cooldown(
-            self.last_monster_appearing_at,
-            current_time,
-            self.monster_appearing_cooldown_seconds,
-        ):
             return False
 
         try:
@@ -613,6 +626,29 @@ class AudioManager:
             return True
         except Exception as e:
             print(f"Warning: Failed to play intense sequence sound: {e}")
+            return False
+
+    def play_exhausted(self) -> bool:
+        """Play the exhausted stinger once when the player reaches the exhausted state."""
+        if not self.available or self.exhausted_sound is None:
+            return False
+
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+
+            if channel is None:
+                print("Warning: Could not find available audio channel for exhausted sound")
+                return False
+
+            channel.set_volume(self.sfx_volume*20)
+            channel.play(self.exhausted_sound)
+            self.exhausted_channel = channel
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play exhausted sound: {e}")
             return False
 
     def cleanup(self) -> None:

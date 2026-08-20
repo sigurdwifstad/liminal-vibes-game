@@ -115,6 +115,8 @@ class PlayerController(Entity):
             speed = self.walk_speed * self.sprint_multiplier
             self.stamina = max(0.0, self.stamina - self.stamina_drain_rate * time.dt)
             if self.stamina <= 0.0:
+                if not self.exhausted:
+                    self.audio.play_exhausted()
                 self.exhausted = True
                 self.sprinting = False
                 speed = self.exhausted_walk_speed
