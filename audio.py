@@ -40,6 +40,7 @@ class AudioManager:
             self.dark_drone_sound = None
             self.einkvan_sounds = []
             self.exhausted_sound = None
+            self.monster_hug_sound = None
             self.ambient_channel = None
             self.footstep_channel = None
             self.monster_appearing_channel = None
@@ -50,6 +51,7 @@ class AudioManager:
             self.dark_drone_channel = None
             self.einkvan_channel = None
             self.exhausted_channel = None
+            self.monster_hug_channel = None
             self.footstep_sprint_sound = None
             self.footstep_sprinting = False
             self._last_monster_scream_index = None
@@ -102,6 +104,8 @@ class AudioManager:
         self.einkvan_sounds = []
         self.exhausted_channel = None
         self.exhausted_sound = None
+        self.monster_hug_channel = None
+        self.monster_hug_sound = None
         self._einkvan_index = -1
         self.einkvan_sequence_finished = False
         self._einkvan_start_at: Optional[float] = None
@@ -220,6 +224,15 @@ class AudioManager:
             else:
                 print(f"Warning: Exhausted sound not found at {exhausted_path}")
                 self.exhausted_sound = None
+
+            monster_hug_path = self.resources_path / "monster_hug.wav"
+            if monster_hug_path.exists():
+                self.monster_hug_sound = pygame.mixer.Sound(str(monster_hug_path))
+                self.monster_hug_sound.set_volume(self.sfx_volume*2)
+                print(f"Loaded monster hug sound from {monster_hug_path}")
+            else:
+                print(f"Warning: Monster hug sound not found at {monster_hug_path}")
+                self.monster_hug_sound = None
         except Exception as e:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
@@ -233,6 +246,7 @@ class AudioManager:
             self.dark_drone_sound = None
             self.einkvan_sounds = []
             self.exhausted_sound = None
+            self.monster_hug_sound = None
 
     def _current_footstep_sound(self):
         if self.footstep_sprinting and self.footstep_sprint_sound is not None:
@@ -649,6 +663,30 @@ class AudioManager:
             return True
         except Exception as e:
             print(f"Warning: Failed to play exhausted sound: {e}")
+            return False
+
+    def play_monster_hug(self) -> bool:
+        """Play the level-9 friendly-monster stinger once, as the player closes
+        the halfway distance to the monster in the hallway."""
+        if not self.available or self.monster_hug_sound is None:
+            return False
+
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+
+            if channel is None:
+                print("Warning: Could not find available audio channel for monster hug sound")
+                return False
+
+            channel.set_volume(self.sfx_volume)
+            channel.play(self.monster_hug_sound)
+            self.monster_hug_channel = channel
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play monster hug sound: {e}")
             return False
 
     def cleanup(self) -> None:

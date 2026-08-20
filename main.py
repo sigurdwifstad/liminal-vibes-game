@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import random
 
 from ursina import AmbientLight, DirectionalLight, PointLight, Entity, Text, Ursina, Vec3, application, camera, color, destroy, scene, time, window
@@ -36,6 +37,7 @@ class LiminalVibesGame:
         self.monster: MonsterController | None = None
         self.spider: SpiderController | None = None
         self._spider_drained_this_encounter = False
+        self._level9_hug_played = False
         self.ui = GameStateUI()
         self.audio = get_audio_manager()
         self.point_lights: list[PointLight] = []
@@ -184,6 +186,17 @@ class LiminalVibesGame:
             self.monster.spawn_delay_seconds = float("inf")
             mx, mz = self.maze.world_from_cell(self.maze.monster_start_cell)
             self.monster.place_at(Vec3(mx, 0.0, mz))
+        elif self.level == 9 and self.maze.monster_start_cell is not None:
+            # Level 9's friendly monster stands motionless at the far end of the
+            # hallway; it is never advanced by `update_monster` (see `update`),
+            # so it never chases or catches the player.
+            self.monster.spawn_delay_seconds = float("inf")
+            mx, mz = self.maze.world_from_cell(self.maze.monster_start_cell)
+            sx, sz = self.maze.world_from_cell(self.maze.start_cell)
+            self.monster.place_at(Vec3(mx, 0.0, mz))
+            to_player = Vec3(sx - mx, 0.0, sz - mz)
+            if to_player.length() > 0.001:
+                self.monster.rotation_y = math.degrees(math.atan2(to_player.x, to_player.z))
         else:
             self.monster.spawn_delay_seconds = 0.0 if self.test else 40.0
 
@@ -191,9 +204,10 @@ class LiminalVibesGame:
             self.spider = SpiderController(position=Vec3(0, -1000, 0))
         self._spider_drained_this_encounter = False
         self.spider.reset()
-        self.spider.spawn_delay_seconds = float("inf") if self.level in (5, 7) else (0.0 if self.test else 40.0)
+        self.spider.spawn_delay_seconds = float("inf") if self.level in (5, 7, 9) else (0.0 if self.test else 40.0)
         self.ui.set_level(self.level)
 
+        self._level9_hug_played = False
         if self.level == 5:
             self.audio.play_intense_sequence()
         elif self.level == 7:
@@ -246,6 +260,33 @@ class LiminalVibesGame:
         self.ui.on_level_completed(level=self.level)
         self._load_level()
 
+    def _update_level9(self) -> None:
+        """Level 9 ("Give the monster a hug"): the friendly monster never
+        chases, so this replaces the normal monster/spider AI updates. Playing
+        `monster_hug.wav` once the player is halfway down the hallway, and
+        advancing the level once the player touches the motionless monster."""
+        assert self.player is not None and self.maze is not None and self.monster is not None
+        if self.maze.monster_start_cell is None:
+            return
+
+        monster_x, monster_z = self.maze.world_from_cell(self.maze.monster_start_cell)
+        start_x, start_z = self.maze.world_from_cell(self.maze.start_cell)
+        total_distance = math.hypot(monster_x - start_x, monster_z - start_z)
+
+        player_pos = self.player.world_position
+        remaining_distance = math.hypot(monster_x - player_pos.x, monster_z - player_pos.z)
+
+        self.monster.update_friendly(player_pos, self.ui.run.survival_seconds)
+
+        if not self._level9_hug_played and total_distance > 0.0:
+            traveled = total_distance - remaining_distance
+            if traveled >= total_distance * 0.5:
+                self._level9_hug_played = True
+                self.audio.play_monster_hug()
+
+        if remaining_distance <= self.monster.catch_distance:
+            self._advance_level()
+
     def update(self) -> None:
         self.ui.update()
         if self.ui.run.running:
@@ -258,6 +299,8 @@ class LiminalVibesGame:
             if self.level == 7:
                 if self.audio.update_einkvan_sequence():
                     self.maze.unlock_pyramid_door()
+            elif self.level == 9:
+                self._update_level9()
             else:
                 caught = self.monster.update_monster(
                     self.maze,

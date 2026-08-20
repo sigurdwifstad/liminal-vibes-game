@@ -370,6 +370,24 @@ class MonsterController(Entity):
             return fallback
         return best_cell
 
+    def update_friendly(self, player_position: Vec3, run_elapsed: float) -> None:
+        """Level 9's friendly monster: stands still and never chases or catches
+        the player, but still reaches its arms out toward them and lets out a
+        scream once they get close, purely as a startle/flavor beat before the
+        hug."""
+        player_flat = Vec3(player_position.x, 0.0, player_position.z)
+        distance_to_player = (player_flat - self.position).length()
+        reach_factor = monster_arm_reach_factor(
+            distance_to_player,
+            reach_start_distance=self.arm_reach_start_distance,
+            full_reach_distance=self.arm_full_reach_distance,
+        )
+        is_reaching_close = reach_factor >= self.arm_scream_threshold
+        if is_reaching_close and not self._was_reaching_close:
+            self.audio.play_monster_scream(run_elapsed)
+        self._was_reaching_close = is_reaching_close
+        self._set_limb_pose(0.0, reach_factor)
+
     def update_monster(
         self,
         maze: MazeManager,

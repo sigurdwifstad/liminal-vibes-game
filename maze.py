@@ -77,6 +77,8 @@ class MazeManager:
             return 35
         elif self.level == 7:
             return 101
+        elif self.level == 9:
+            return 45
         else:
             return 17
 
@@ -218,6 +220,9 @@ class MazeManager:
         if self.level == 7:
             return self._generate_level7_layout()
 
+        if self.level == 9:
+            return self._generate_level9_layout()
+
         grid = [[False for _ in range(self.grid_size)] for _ in range(self.grid_size)]
         rng = random.Random(f"{self.seed}|level|{self.level}")
         stack = [(1, 1)]
@@ -282,6 +287,27 @@ class MazeManager:
         self.exit_direction = (0, 1)
         self.exit_wall_cell = self._global_from_local(*front_face_local)
         self.exit_cell = (self.exit_wall_cell[0], self.exit_wall_cell[1] - 1)
+        self.door_unlocked = False
+        return walkable
+
+    def _generate_level9_layout(self) -> Set[Cell]:
+        """Straight hallway layout for level 9 ("Give the monster a hug"): a single
+        corridor with a friendly, motionless monster waiting at the far end and
+        no exit door -- the level is completed by walking up and touching it
+        (see `LiminalVibesGame._update_level9` in main.py)."""
+        walkable: Set[Cell] = set()
+        for lz in range(1, self.grid_size - 1):
+            walkable.add(self._global_from_local(1, lz))
+
+        self.start_cell = self._global_from_local(1, 1)
+        self.monster_start_cell = self._global_from_local(1, self.grid_size - 2)
+        self.player_spawn_rotation_y = 0.0
+        self.exit_direction = (0, 1)
+        # No portal in this level -- point the exit cells at sentinel coordinates
+        # far outside the grid so `player_reached_exit` never matches, and so the
+        # generic wall builder never paints an exit-door texture on the far wall.
+        self.exit_cell = (10 ** 6, 10 ** 6)
+        self.exit_wall_cell = (10 ** 6, 10 ** 6 + 1)
         self.door_unlocked = False
         return walkable
 
@@ -660,7 +686,7 @@ class MazeManager:
 
     def _generate_level(self) -> None:
         self.walkable_cells = self._generate_walkable_cells()
-        if self.level not in (5, 7):
+        if self.level not in (5, 7, 9):
             self.start_cell = self._global_from_local(1, 1)
             self.monster_start_cell = None
             self.player_spawn_rotation_y = 0.0
