@@ -150,9 +150,20 @@ def _install_fake_engine_modules() -> None:
         def __init__(self, *_args, **_kwargs):
             self.filtering = None
 
+    class _FakeMesh:
+        def __init__(self, *_args, **_kwargs):
+            self.vertices = _kwargs.get("vertices")
+            self.triangles = _kwargs.get("triangles")
+            self.uvs = _kwargs.get("uvs")
+            self.normals = _kwargs.get("normals")
+            self.mode = _kwargs.get("mode")
+
     class _FakePNMImage:
         def __init__(self, *_args, **_kwargs):
             self._pixels = {}
+
+        def addAlpha(self, *_args, **_kwargs):
+            pass
 
         def setXel(self, *args, **_kwargs):
             self._pixels[args[:2]] = args[2:]
@@ -177,6 +188,7 @@ def _install_fake_engine_modules() -> None:
     fake_ursina.Entity = _FakeEntity
     fake_ursina.Vec3 = _FakeVec3
     fake_ursina.Texture = _FakeTexture
+    fake_ursina.Mesh = _FakeMesh
     fake_ursina.Text = _FakeEntity
     fake_ursina.AmbientLight = _FakeEntity
     fake_ursina.PointLight = _FakeEntity
@@ -210,6 +222,63 @@ def _install_fake_engine_modules() -> None:
 
 
 class TestCoreLogic(unittest.TestCase):
+    def test_level_1_intro_hint_appears_then_fades(self):
+        _install_fake_engine_modules()
+        from game_state import GameStateUI
+
+        ui = GameStateUI()
+        ui.start_new_run(level=1)
+
+        self.assertTrue(ui.level_intro.enabled)
+        self.assertGreater(ui.level_intro_timer, 0.0)
+
+        ui.level_intro_timer = 0.0
+        ui.update()
+        self.assertFalse(ui.level_intro.enabled)
+        self.assertEqual(ui.level_intro_timer, 0.0)
+
+    def test_regular_game_over_fades_to_black_then_shows_restart_hint(self):
+        """After being caught on a regular level, the screen should hold for
+        ~3 seconds (with GAME OVER/survival time/restart hint all hidden),
+        then fade to black; all that text should only appear together once
+        the fade has fully completed."""
+        _install_fake_engine_modules()
+        from game_state import GameStateUI
+        from ursina import time as ursina_time
+
+        ui = GameStateUI()
+        ui.on_player_caught()
+
+        self.assertFalse(ui.game_over_title.enabled)
+        self.assertFalse(ui.game_over_time.enabled)
+        self.assertFalse(ui.game_over_hint.enabled)
+        self.assertEqual(ui.game_over_backdrop.color, (0, 0, 0, 0))
+
+        # Still within the initial 3-second hold: no fade yet, no text.
+        ursina_time.dt = 2.9
+        ui.update()
+        self.assertFalse(ui.game_over_title.enabled)
+        self.assertFalse(ui.game_over_time.enabled)
+        self.assertFalse(ui.game_over_hint.enabled)
+        self.assertEqual(ui.game_over_backdrop.color, (0, 0, 0, 0))
+
+        # Past the hold, partway through the fade: backdrop darkens, all
+        # text stays hidden until the fade fully completes.
+        ursina_time.dt = 0.2
+        ui.update()
+        self.assertFalse(ui.game_over_title.enabled)
+        self.assertFalse(ui.game_over_time.enabled)
+        self.assertFalse(ui.game_over_hint.enabled)
+        self.assertGreater(ui.game_over_backdrop.color[3], 0)
+
+        # Once the fade duration has fully elapsed, all the text appears together.
+        ursina_time.dt = ui.game_over_fade_duration
+        ui.update()
+        self.assertTrue(ui.game_over_title.enabled)
+        self.assertTrue(ui.game_over_time.enabled)
+        self.assertTrue(ui.game_over_hint.enabled)
+        self.assertEqual(ui.game_over_backdrop.color[3], 255)
+
     def test_format_mmss(self):
         self.assertEqual(format_mmss(0), "00:00")
         self.assertEqual(format_mmss(65.9), "01:05")
@@ -769,6 +838,374 @@ class TestCoreLogic(unittest.TestCase):
         threshold = 0.62
         self.assertGreaterEqual(monster_arm_reach_factor(1.4), threshold)
         self.assertLess(monster_arm_reach_factor(1.8), threshold)
+
+    def test_level_10_uses_standard_maze_generation(self):
+        """Level 10 ("The final level") is not a special-cased hallway/open
+        field like levels 5/7/9 -- it uses the same procedural maze as the
+        regular chase levels, giving the fleeing child room to run and the
+        player-monster room to hide before teleporting."""
+        try:
+            from maze import MazeManager
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+
+        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+
+        # Standard grid size (17), not one of the special-cased sizes (35/101/45).
+        self.assertEqual(maze.grid_size, 17)
+        self.assertIsNone(maze.monster_start_cell)
+        self.assertTrue(maze.is_walkable_cell(maze.start_cell))
+        self.assertTrue(maze.is_walkable_cell(maze.exit_cell))
+        # A real interior maze is carved (unlike level 7's open field): not
+        # every walkable cell has 4 walkable neighbors.
+        neighbor_counts = [sum(1 for _ in maze.walkable_neighbors(cell)) for cell in maze.walkable_cells]
+        self.assertTrue(any(count < 4 for count in neighbor_counts))
+
+    def test_child_wanders_via_pathfinding_when_player_not_in_sight(self):
+        """The child never stands fully still: it continuously explores the
+        maze via simple pathfinding, and only switches to (faster) fleeing
+        once the player-monster spots it within the player-monster's own
+        field of view."""
+        try:
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+
+        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        child = ChildCharacter(position=Vec3(0, -1000, 0))
+        cx, cz = maze.world_from_cell(maze.exit_cell)
+        child.place_at(Vec3(cx, 0.0, cz))
+        start_position = (child.position.x, child.position.z)
+
+        # Player nowhere near / never in the player-monster's field of view of the child.
+        far_player_pos = Vec3(-9999.0, 0.0, -9999.0)
+        with patch("child.is_position_visible", return_value=False), patch("child.time.dt", 0.1):
+            child.update_child(maze, far_player_pos, run_elapsed=0.0)
+
+        self.assertFalse(child.fleeing)
+        self.assertNotEqual((child.position.x, child.position.z), start_position)
+
+    def test_child_flees_at_sprint_speed_once_spotted_by_player(self):
+        try:
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+
+        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        child = ChildCharacter(position=Vec3(0, -1000, 0))
+        cx, cz = maze.world_from_cell(maze.exit_cell)
+        child.place_at(Vec3(cx, 0.0, cz))
+        start_position = (child.position.x, child.position.z)
+
+        near_player_pos = Vec3(cx + 1.0, 0.0, cz)
+        with patch("child.is_position_visible", return_value=True), patch("child.time.dt", 0.1):
+            child.update_child(maze, near_player_pos, run_elapsed=0.0)
+
+        self.assertTrue(child.fleeing)
+        self.assertNotEqual((child.position.x, child.position.z), start_position)
+        # Matches the player's own sprint speed from earlier levels
+        # (walk_speed 6.0 * sprint_multiplier 1.65).
+        self.assertAlmostEqual(child.flee_speed, 6.0 * 1.65, places=5)
+        self.assertGreater(child.flee_speed, child.explore_speed)
+
+    def test_child_moves_away_from_player_over_time_while_fleeing(self):
+        """Regression test: the child must not path straight through/toward
+        the player-monster while fleeing (previously `random_far_walkable_cell`
+        picked a target relative only to the child's own position, which
+        could route the "flee" path right back past the player). Over
+        several simulated frames while continuously in sight, the child's
+        distance from the player should trend upward, never collapsing back
+        toward zero."""
+        try:
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+
+        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        child = ChildCharacter(position=Vec3(0, -1000, 0))
+        cx, cz = maze.world_from_cell(maze.exit_cell)
+        child.place_at(Vec3(cx, 0.0, cz))
+
+        # Player standing right next to the child (stationary), always in sight.
+        player_pos = Vec3(cx + 1.0, 0.0, cz)
+
+        min_distance_seen = (child.position - player_pos).length()
+        with patch("child.is_position_visible", return_value=True), patch("child.time.dt", 0.15):
+            for _ in range(40):
+                child.update_child(maze, player_pos, run_elapsed=0.0)
+                distance = (child.position - player_pos).length()
+                min_distance_seen = min(min_distance_seen, distance)
+
+        final_distance = (child.position - player_pos).length()
+        # The child should have put real distance between itself and the
+        # player, and should not have ended up back on top of it.
+        self.assertGreater(final_distance, min_distance_seen)
+        self.assertGreater(final_distance, 2.0)
+
+    def test_child_flee_trigger_uses_players_field_of_view_not_its_own(self):
+        """The child must flee based on whether the *player-monster* can see
+        it (player's forward direction / FOV cone), not whether the child
+        itself can see the player. A player facing away from the child
+        should not trigger fleeing, even at close range with a clear line
+        of sight."""
+        try:
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+
+        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        child = ChildCharacter(position=Vec3(0, -1000, 0))
+        cx, cz = maze.world_from_cell(maze.exit_cell)
+        child.place_at(Vec3(cx, 0.0, cz))
+
+        near_player_pos = Vec3(cx, 0.0, cz + 1.0)
+
+        # Player facing directly away from the child: the child is behind
+        # the player-monster, out of its field of view.
+        player_forward_away = Vec3(0.0, 0.0, 1.0)
+        with patch("child.time.dt", 0.1):
+            child.update_child(maze, near_player_pos, player_forward_away, run_elapsed=0.0)
+        self.assertFalse(child.fleeing)
+
+        # Same distance/line of sight, but the player-monster now faces the
+        # child directly: fleeing should trigger.
+        player_forward_toward_child = Vec3(0.0, 0.0, -1.0)
+        with patch("child.time.dt", 0.1):
+            child.update_child(maze, near_player_pos, player_forward_toward_child, run_elapsed=0.0)
+        self.assertTrue(child.fleeing)
+
+    def test_child_gets_stuck_in_dead_end_instead_of_running_toward_player(self):
+        """If every walkable neighbor of the child's current cell is closer
+        to the player-monster than the child's own cell (a true dead end
+        with the player blocking the only way out), the child must freeze in
+        place rather than being forced to step toward/past the player."""
+        try:
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+            from child import ChildCharacter
+            from ursina import Vec3
+
+        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        child = ChildCharacter(position=Vec3(0, -1000, 0))
+        cx, cz = maze.world_from_cell(maze.exit_cell)
+        child.place_at(Vec3(cx, 0.0, cz))
+        child_cell = maze.cell_from_world(child.position)
+
+        # A dead-end stub: the only neighbor of the child's cell is the
+        # player's own cell, which is strictly closer to the player than the
+        # child's current cell (impossible for any real neighbor to be
+        # farther away, since it *is* the player's cell).
+        player_cell = (child_cell[0] + 1, child_cell[1])
+        original_walkable_neighbors = maze.walkable_neighbors
+        maze.walkable_neighbors = lambda cell: [player_cell] if cell == child_cell else original_walkable_neighbors(cell)
+
+        px, pz = maze.world_from_cell(player_cell)
+        player_world = Vec3(px, 0.0, pz)
+
+        start_position = Vec3(child.position.x, child.position.y, child.position.z)
+        with patch("child.is_position_visible", return_value=True), patch("child.time.dt", 0.2):
+            for _ in range(10):
+                child.update_child(maze, player_world, run_elapsed=0.0)
+
+        self.assertTrue(child.fleeing)
+        # The child must not have moved at all -- it should be stuck, not
+        # forced toward the player.
+        self.assertAlmostEqual(child.position.x, start_position.x, places=4)
+        self.assertAlmostEqual(child.position.z, start_position.z, places=4)
+
+    def test_astar_path_steers_around_an_avoided_cell(self):
+        try:
+            from monster import astar_path
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from monster import astar_path
+
+        class _OpenGridMaze:
+            """Minimal stand-in exposing only what `astar_path` needs: an
+            open grid with no walls, so there are genuine alternate routes
+            around any single avoided cell."""
+
+            def __init__(self, width: int, height: int):
+                self.width = width
+                self.height = height
+
+            def walkable_neighbors(self, cell):
+                x, z = cell
+                for nx, nz in ((x + 1, z), (x - 1, z), (x, z + 1), (x, z - 1)):
+                    if 0 <= nx < self.width and 0 <= nz < self.height:
+                        yield nx, nz
+
+        maze = _OpenGridMaze(width=11, height=7)
+        start_cell = (0, 3)
+        goal_cell = (10, 3)
+        avoid_cell = (5, 3)
+
+        plain_path = astar_path(maze, start_cell, goal_cell)
+        self.assertIn(avoid_cell, plain_path)
+
+        steered_path = astar_path(maze, start_cell, goal_cell, avoid_cell=avoid_cell, avoid_radius=2.0, avoid_penalty=20.0)
+
+        self.assertEqual(steered_path[0], start_cell)
+        self.assertEqual(steered_path[-1], goal_cell)
+        # With genuine alternate routes available on the open grid, the
+        # steered route should detour around the avoided cell rather than
+        # cutting straight through it.
+        self.assertNotIn(avoid_cell, steered_path)
+
+
+        try:
+            from audio import AudioManager
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from audio import AudioManager
+
+        with patch("audio.pygame.mixer.init"):
+            manager = AudioManager()
+        self.assertIsNotNone(manager.endgame_sound)
+
+    def test_monster_footstep_sound_loads_and_overrides_regular_footsteps(self):
+        try:
+            from audio import AudioManager
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from audio import AudioManager
+
+        with patch("audio.pygame.mixer.init"):
+            manager = AudioManager()
+        self.assertIsNotNone(manager.monster_footstep_sound)
+        self.assertIs(manager._current_footstep_sound(), manager.footstep_sound)
+
+        manager.set_footstep_monster_mode(True)
+        self.assertIs(manager._current_footstep_sound(), manager.monster_footstep_sound)
+
+    def test_level_10_disables_sprint_spider_and_the_regular_monster(self):
+        try:
+            from main import LiminalVibesGame
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from main import LiminalVibesGame
+
+        game = LiminalVibesGame(test=True, start_level=10)
+        self.assertTrue(game.player.no_sprint)
+        self.assertTrue(game.player.use_monster_footstep)
+        self.assertEqual(game.spider.spawn_delay_seconds, float("inf"))
+        self.assertEqual(game.monster.spawn_delay_seconds, float("inf"))
+        self.assertTrue(game.level10_vision_tint.enabled)
+        self.assertTrue(game.level10_vein_overlay.enabled)
+        self.assertTrue(game.child.spawned)
+
+    def test_level_10_teleport_plays_monster_appearing_sound(self):
+        try:
+            from main import LiminalVibesGame
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from main import LiminalVibesGame
+
+        game = LiminalVibesGame(test=True, start_level=10)
+        with patch.object(game.audio, "play_monster_appearing", return_value=True) as mock_play:
+            game._teleport_player()
+            mock_play.assert_called_once()
+
+    def test_level_10_catch_freezes_and_starts_the_endgame_sequence(self):
+        try:
+            from main import LiminalVibesGame
+            from ursina import time as ursina_time
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from main import LiminalVibesGame
+            from ursina import time as ursina_time
+
+        game = LiminalVibesGame(test=True, start_level=10)
+        ursina_time.dt = 0.1
+
+        # Move the child right on top of the player to force a catch.
+        game.child.position = game.player.position
+        with patch.object(game.audio, "play_endgame", return_value=True) as mock_play_endgame, \
+                patch.object(game.audio, "play_monster_scream", return_value=True) as mock_play_scream:
+            game.update()
+            mock_play_endgame.assert_called_once()
+            mock_play_scream.assert_called_once()
+
+        self.assertTrue(game._level10_endgame_triggered)
+        self.assertFalse(game.ui.run.running)
+        self.assertTrue(game.ui.endgame_active)
+        self.assertFalse(game.player.enabled)
+
+    def test_endgame_screen_holds_until_restart_instead_of_auto_quitting(self):
+        """The "END GAME" screen should stay up indefinitely once its
+        fade/reveal animation completes -- the game must not auto-quit.
+        Restart (R) and quit (ESC) remain available via the generic
+        input() handling, since `run.running` is False throughout."""
+        try:
+            from game_state import GameStateUI
+            from ursina import time as ursina_time
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from game_state import GameStateUI
+            from ursina import time as ursina_time
+
+        ui = GameStateUI()
+        ui.on_endgame_caught()
+        ursina_time.dt = ui.endgame_fade_duration + ui.endgame_hold_seconds + 5.0
+
+        # game_state.py no longer imports/calls application.quit() for the
+        # endgame sequence -- the screen just holds once finished.
+        ui.update()
+
+        self.assertTrue(ui.endgame_finished)
+        self.assertTrue(ui.endgame_text.enabled)
+        self.assertTrue(ui.endgame_hint.enabled)
+        self.assertFalse(ui.run.running)
+
+        # A further update() call should not error or re-trigger anything now
+        # that the sequence is finished; the screen just holds.
+        ui.update()
+        self.assertTrue(ui.endgame_active)
+
+    def test_restart_key_always_returns_to_level_1(self):
+        """Pressing "R" after dying should always restart at level 1, even
+        if the run was originally launched at a later --start-level (for
+        example via dev/test tooling)."""
+        try:
+            from main import LiminalVibesGame
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from main import LiminalVibesGame
+
+        game = LiminalVibesGame(test=True, start_level=5)
+        self.assertEqual(game.level, 5)
+
+        game.ui.run.running = False
+        game.input("r")
+
+        self.assertEqual(game.level, 1)
+        self.assertEqual(game.start_level, 5)
+        self.assertTrue(game.ui.run.running)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ class AudioManager:
             self.available = False
             self.ambient_sound = None
             self.footstep_sound = None
+            self.monster_footstep_sound = None
             self.monster_appearing_sound = None
             self.monster_scream_sounds = []
             self.spider_walking_sound = None
@@ -41,7 +42,7 @@ class AudioManager:
             self.einkvan_sounds = []
             self.exhausted_sound = None
             self.monster_hug_sound = None
-            self.ambient_channel = None
+            self.endgame_sound = None
             self.footstep_channel = None
             self.monster_appearing_channel = None
             self.monster_scream_channel = None
@@ -52,8 +53,10 @@ class AudioManager:
             self.einkvan_channel = None
             self.exhausted_channel = None
             self.monster_hug_channel = None
+            self.endgame_channel = None
             self.footstep_sprint_sound = None
             self.footstep_sprinting = False
+            self.use_monster_footstep = False
             self._last_monster_scream_index = None
             self.ambient_playing = False
             self.footstep_playing = False
@@ -85,6 +88,10 @@ class AudioManager:
         self.footstep_sprint_sound = None
         self.footstep_sprinting = False
         self.footstep_playing = False
+        # Level 10: the player-monster's own heavier footfall sound, played
+        # instead of the regular human footstep sound while moving.
+        self.monster_footstep_sound = None
+        self.use_monster_footstep = False
 
         self.monster_appearing_channel = None
         self.monster_appearing_sound = None
@@ -106,6 +113,8 @@ class AudioManager:
         self.exhausted_sound = None
         self.monster_hug_channel = None
         self.monster_hug_sound = None
+        self.endgame_channel = None
+        self.endgame_sound = None
         self._einkvan_index = -1
         self.einkvan_sequence_finished = False
         self._einkvan_start_at: Optional[float] = None
@@ -146,6 +155,15 @@ class AudioManager:
                 print(f"Warning: Footstep sound not found at {footstep_path}")
                 self.footstep_sound = None
                 self.footstep_sprint_sound = None
+
+            monster_footstep_path = self.resources_path / "monster_footsteps.mp3"
+            if monster_footstep_path.exists():
+                self.monster_footstep_sound = pygame.mixer.Sound(str(monster_footstep_path))
+                self.monster_footstep_sound.set_volume(self.sfx_volume)
+                print(f"Loaded monster footstep sound from {monster_footstep_path}")
+            else:
+                print(f"Warning: Monster footstep sound not found at {monster_footstep_path}")
+                self.monster_footstep_sound = None
 
             monster_appearing_path = self.resources_path / "monster_appearing.mp3"
             if monster_appearing_path.exists():
@@ -233,11 +251,21 @@ class AudioManager:
             else:
                 print(f"Warning: Monster hug sound not found at {monster_hug_path}")
                 self.monster_hug_sound = None
+
+            endgame_path = self.resources_path / "endgame.mp3"
+            if endgame_path.exists():
+                self.endgame_sound = pygame.mixer.Sound(str(endgame_path))
+                self.endgame_sound.set_volume(self.sfx_volume*2)
+                print(f"Loaded endgame sound from {endgame_path}")
+            else:
+                print(f"Warning: Endgame sound not found at {endgame_path}")
+                self.endgame_sound = None
         except Exception as e:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
             self.footstep_sound = None
             self.footstep_sprint_sound = None
+            self.monster_footstep_sound = None
             self.monster_appearing_sound = None
             self.monster_scream_sounds = []
             self.spider_walking_sound = None
@@ -247,8 +275,11 @@ class AudioManager:
             self.einkvan_sounds = []
             self.exhausted_sound = None
             self.monster_hug_sound = None
+            self.endgame_sound = None
 
     def _current_footstep_sound(self):
+        if self.use_monster_footstep and self.monster_footstep_sound is not None:
+            return self.monster_footstep_sound
         if self.footstep_sprinting and self.footstep_sprint_sound is not None:
             return self.footstep_sprint_sound
         return self.footstep_sound
@@ -324,6 +355,8 @@ class AudioManager:
             self.footstep_sound.set_volume(self.sfx_volume)
         if self.footstep_sprint_sound is not None:
             self.footstep_sprint_sound.set_volume(self.sfx_volume)
+        if self.monster_footstep_sound is not None:
+            self.monster_footstep_sound.set_volume(self.sfx_volume)
         if self.monster_appearing_sound is not None:
             self.monster_appearing_sound.set_volume(self.sfx_volume)
         for scream_sound in self.monster_scream_sounds:
@@ -377,6 +410,18 @@ class AudioManager:
         if sprinting == self.footstep_sprinting:
             return
         self.footstep_sprinting = sprinting
+
+        if self.footstep_playing:
+            self.stop_footstep_loop()
+            self.play_footstep_loop()
+
+    def set_footstep_monster_mode(self, use_monster_footstep: bool) -> None:
+        """Level 10: the player-monster's footfalls use `monster_footsteps.mp3`
+        instead of the regular human footstep sound."""
+        use_monster_footstep = bool(use_monster_footstep)
+        if use_monster_footstep == self.use_monster_footstep:
+            return
+        self.use_monster_footstep = use_monster_footstep
 
         if self.footstep_playing:
             self.stop_footstep_loop()
@@ -687,6 +732,30 @@ class AudioManager:
             return True
         except Exception as e:
             print(f"Warning: Failed to play monster hug sound: {e}")
+            return False
+
+    def play_endgame(self) -> bool:
+        """Play the level-10 finale stinger once the player-monster catches
+        the child, as the screen fades to black."""
+        if not self.available or self.endgame_sound is None:
+            return False
+
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+
+            if channel is None:
+                print("Warning: Could not find available audio channel for endgame sound")
+                return False
+
+            channel.set_volume(self.sfx_volume)
+            channel.play(self.endgame_sound)
+            self.endgame_channel = channel
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play endgame sound: {e}")
             return False
 
     def cleanup(self) -> None:

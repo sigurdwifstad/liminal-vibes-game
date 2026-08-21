@@ -16,6 +16,85 @@ from maze import Cell, MazeManager
 _VIS_CONE_COS: float = math.cos(math.radians(52.0))
 
 
+def is_position_visible(maze: MazeManager, viewer_position: Vec3, viewer_forward: Vec3 | None, target_position: Vec3) -> bool:
+    """Line-of-sight + ~52-degree viewing-cone check from `viewer_position`
+    (facing `viewer_forward`) to `target_position`. Shared by the monster's
+    "is the monster visible to the player" check and level 10's "is the
+    player-monster visible to the fleeing child" check (used in reverse to
+    determine when the player-monster may teleport)."""
+    viewer_cell = maze.cell_from_world(viewer_position)
+    target_cell = maze.cell_from_world(target_position)
+    if not maze.has_clear_line(viewer_cell, target_cell):
+        return False
+
+    forward = Vec3(0, 0, 1)
+    if viewer_forward is not None and viewer_forward.length() > 0.001:
+        forward = Vec3(viewer_forward.x, 0, viewer_forward.z).normalized()
+
+    to_target = Vec3(target_position.x - viewer_position.x, 0, target_position.z - viewer_position.z)
+    if to_target.length() < 0.001:
+        return True
+
+    to_target_n = to_target.normalized()
+    return forward.dot(to_target_n) >= _VIS_CONE_COS
+
+
+def astar_path(
+    maze: MazeManager,
+    start: Cell,
+    goal: Cell,
+    max_nodes: int = 1200,
+    avoid_cell: Optional[Cell] = None,
+    avoid_radius: float = 5.0,
+    avoid_penalty: float = 14.0,
+) -> List[Cell]:
+    """A* pathfinding across the maze's walkable-cell graph. Shared by the
+    monster's chase AI and level 10's fleeing-child movement.
+
+    When `avoid_cell` is given, cells within `avoid_radius` (Manhattan
+    distance) of it are penalized -- steeper the closer they are -- so the
+    resulting route steers away from that cell (e.g. the player-monster's
+    current position) instead of potentially cutting straight past it on the
+    way to the goal."""
+    if start == goal:
+        return [start]
+
+    open_heap: List[tuple[float, Cell]] = []
+    heapq.heappush(open_heap, (0.0, start))
+    came_from: Dict[Cell, Optional[Cell]] = {start: None}
+    g_score: Dict[Cell, float] = {start: 0.0}
+    visited = 0
+
+    def heuristic(a: Cell, b: Cell) -> float:
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    while open_heap and visited < max_nodes:
+        _, current = heapq.heappop(open_heap)
+        visited += 1
+        if current == goal:
+            out: List[Cell] = [current]
+            while came_from[current] is not None:
+                current = came_from[current]  # type: ignore[assignment]
+                out.append(current)
+            out.reverse()
+            return out
+
+        for nb in maze.walkable_neighbors(current):
+            step_cost = 1.0
+            if avoid_cell is not None:
+                dist_to_avoid = heuristic(nb, avoid_cell)
+                if dist_to_avoid < avoid_radius:
+                    step_cost += avoid_penalty * (avoid_radius - dist_to_avoid) / avoid_radius
+            tentative = g_score[current] + step_cost
+            if nb not in g_score or tentative < g_score[nb]:
+                came_from[nb] = current
+                g_score[nb] = tentative
+                f = tentative + heuristic(nb, goal)
+                heapq.heappush(open_heap, (f, nb))
+
+    return [start]
+
+
 class MonsterController(Entity):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -270,22 +349,7 @@ class MonsterController(Entity):
             self.right_leg.rotation_x = 0.0
 
     def _is_visible_to_player(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, target_position: Vec3) -> bool:
-        player_cell = maze.cell_from_world(player_position)
-        target_cell = maze.cell_from_world(target_position)
-        if not maze.has_clear_line(player_cell, target_cell):
-            return False
-
-        forward = Vec3(0, 0, 1)
-        if player_forward is not None and player_forward.length() > 0.001:
-            forward = Vec3(player_forward.x, 0, player_forward.z).normalized()
-
-        to_target = Vec3(target_position.x - player_position.x, 0, target_position.z - player_position.z)
-        if to_target.length() < 0.001:
-            return True
-
-        to_target_n = to_target.normalized()
-        # Approximate player's visible cone to avoid obvious in-view spawns.
-        return forward.dot(to_target_n) >= _VIS_CONE_COS
+        return is_position_visible(maze, player_position, player_forward, target_position)
 
     def _pick_hidden_cell(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, min_dist: int, max_dist: int) -> Cell | None:
         player_cell = maze.cell_from_world(player_position)
@@ -319,38 +383,7 @@ class MonsterController(Entity):
         return Vec3(wx, 0.0, wz)
 
     def _astar(self, maze: MazeManager, start: Cell, goal: Cell, max_nodes: int = 1200) -> List[Cell]:
-        if start == goal:
-            return [start]
-
-        open_heap: List[Tuple[float, Cell]] = []
-        heapq.heappush(open_heap, (0.0, start))
-        came_from: Dict[Cell, Optional[Cell]] = {start: None}
-        g_score: Dict[Cell, float] = {start: 0.0}
-        visited = 0
-
-        def heuristic(a: Cell, b: Cell) -> float:
-            return abs(a[0] - b[0]) + abs(a[1] - b[1])
-
-        while open_heap and visited < max_nodes:
-            _, current = heapq.heappop(open_heap)
-            visited += 1
-            if current == goal:
-                out: List[Cell] = [current]
-                while came_from[current] is not None:
-                    current = came_from[current]  # type: ignore[assignment]
-                    out.append(current)
-                out.reverse()
-                return out
-
-            for nb in maze.walkable_neighbors(current):
-                tentative = g_score[current] + 1.0
-                if nb not in g_score or tentative < g_score[nb]:
-                    came_from[nb] = current
-                    g_score[nb] = tentative
-                    f = tentative + heuristic(nb, goal)
-                    heapq.heappush(open_heap, (f, nb))
-
-        return [start]
+        return astar_path(maze, start, goal, max_nodes=max_nodes)
 
     def _closest_walkable_to_target(self, maze: MazeManager, target: Cell, avoid: Cell | None = None) -> Cell:
         best_cell = target

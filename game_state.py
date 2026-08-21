@@ -29,8 +29,25 @@ class GameStateUI:
         self.hud_level = Text(text="Level 1", position=(-0.86, 0.40), scale=1.1, color=color.rgb(242, 242, 235))
         self.level_banner_timer = 0.0
         self.level_banner = Text(text="", position=(0, 0.22), origin=(0, 0), scale=1.9, color=color.rgb(240, 230, 170), enabled=False)
+        self.level_intro = Text(
+            text="WASD keys to move\nSHIFT to sprint",
+            position=(0, 0.10),
+            origin=(0, 0),
+            scale=1.3,
+            color=color.rgb(245, 245, 238),
+            enabled=False,
+        )
+        self.level_intro_timer = 0.0
+        self.level_intro_duration = 10.0
 
-        self.game_over_root = Entity(enabled=False)
+        self.game_over_root = Entity(parent=camera.ui, enabled=False)
+        self.game_over_backdrop = Entity(
+            parent=self.game_over_root,
+            model="quad",
+            position=Vec3(0, 0, 0.01),
+            scale=Vec3(2.2, 1.3, 1),
+            color=color.rgba(0, 0, 0, 0),
+        )
         self.game_over_title = Text(
             parent=self.game_over_root,
             text="GAME OVER",
@@ -38,6 +55,7 @@ class GameStateUI:
             origin=(0, 0),
             scale=3,
             color=color.rgb(255, 70, 70),
+            enabled=False,
         )
         self.game_over_time = Text(
             parent=self.game_over_root,
@@ -46,15 +64,24 @@ class GameStateUI:
             origin=(0, 0),
             scale=1.6,
             color=color.white,
+            enabled=False,
         )
         self.game_over_hint = Text(
             parent=self.game_over_root,
-            text="Press R to restart",
+            text="Press R to restart, ESC to quit",
             position=(0, -0.08),
             origin=(0, 0),
             scale=1.2,
             color=color.rgb(230, 230, 230),
+            enabled=False,
         )
+        # After being caught on a regular level, the screen holds for a
+        # few seconds, then fades to black; the restart/quit hint only
+        # appears once the fade has fully finished (mirrors the level 10
+        # "END GAME" fade sequence in `_update_endgame`).
+        self.game_over_fade_timer = 0.0
+        self.game_over_fade_delay = 3.0
+        self.game_over_fade_duration = 1.5
 
         self.loading_root = Entity(parent=camera.ui, enabled=False)
         self.loading_backdrop = Entity(
@@ -81,6 +108,40 @@ class GameStateUI:
             color=color.rgb(210, 210, 205),
         )
 
+        # Level 10's finale: player-monster catches the fleeing child, the
+        # screen freezes and fades to black behind an "END GAME" title.
+        self.endgame_active = False
+        self.endgame_fade_timer = 0.0
+        self.endgame_fade_duration = 2.5
+        self.endgame_hold_seconds = 3.5
+        self.endgame_finished = False
+        self.endgame_root = Entity(parent=camera.ui, enabled=False)
+        self.endgame_backdrop = Entity(
+            parent=self.endgame_root,
+            model="quad",
+            position=Vec3(0, 0, 0),
+            scale=Vec3(2.2, 1.3, 1),
+            color=color.rgba(0, 0, 0, 0),
+        )
+        self.endgame_text = Text(
+            parent=self.endgame_root,
+            text="END GAME",
+            position=(0, 0.05),
+            origin=(0, 0),
+            scale=4,
+            color=color.white,
+            enabled=False,
+        )
+        self.endgame_hint = Text(
+            parent=self.endgame_root,
+            text="Press R to restart, ESC to quit",
+            position=(0, -0.12),
+            origin=(0, 0),
+            scale=1.2,
+            color=color.rgb(230, 230, 230),
+            enabled=False,
+        )
+
     def start_new_run(self, level: int = 1) -> None:
         self.run.running = True
         self.run.start_time = pytime.time()
@@ -88,16 +149,30 @@ class GameStateUI:
         self.run.level = level
         self.loading_root.enabled = False
         self.game_over_root.enabled = False
+        self.game_over_backdrop.color = color.rgba(0, 0, 0, 0)
+        self.game_over_title.enabled = False
+        self.game_over_time.enabled = False
+        self.game_over_hint.enabled = False
+        self.game_over_fade_timer = 0.0
+        self.endgame_active = False
+        self.endgame_finished = False
+        self.endgame_root.enabled = False
+        self.endgame_hint.enabled = False
         self.hud_time.enabled = True
         self.hud_level.enabled = True
         self.hud_time.text = "00:00"
         self.hud_level.text = f"Level {self.run.level}"
         self.level_banner.enabled = False
         self.level_banner_timer = 0.0
+        self.level_intro.enabled = level == 1
+        self.level_intro_timer = self.level_intro_duration if level == 1 else 0.0
 
     def set_level(self, level: int) -> None:
         self.run.level = level
         self.hud_level.text = f"Level {level}"
+        if level != 1:
+            self.level_intro.enabled = False
+            self.level_intro_timer = 0.0
 
     def on_level_completed(self, level: int) -> None:
         self.set_level(level)
@@ -113,7 +188,35 @@ class GameStateUI:
         self.level_banner.enabled = False
         self.loading_root.enabled = False
         self.game_over_root.enabled = True
+        self.game_over_backdrop.color = color.rgba(0, 0, 0, 0)
+        self.game_over_title.enabled = False
+        self.game_over_time.enabled = False
+        self.game_over_hint.enabled = False
+        self.game_over_fade_timer = 0.0
         self.game_over_time.text = f"Survived: {format_mmss(self.run.survival_seconds)}"
+
+    def on_endgame_caught(self) -> None:
+        """Level 10's finale: the player-monster has caught the child. Freeze
+        the run and start the freeze/fade-to-black/"END GAME" sequence (see
+        `_update_endgame`); the caller is responsible for triggering the
+        `endgame.mp3` audio cue once (via `AudioManager.play_endgame`). The
+        screen then holds indefinitely -- the run stays frozen until the
+        player presses R (restart, handled generically since `run.running`
+        is False) or ESC (quit)."""
+        self.run.running = False
+        self.run.end_time = pytime.time()
+        self.hud_time.enabled = False
+        self.hud_level.enabled = False
+        self.level_banner.enabled = False
+        self.loading_root.enabled = False
+        self.game_over_root.enabled = False
+        self.endgame_active = True
+        self.endgame_finished = False
+        self.endgame_fade_timer = 0.0
+        self.endgame_backdrop.color = color.rgba(0, 0, 0, 0)
+        self.endgame_text.enabled = False
+        self.endgame_hint.enabled = False
+        self.endgame_root.enabled = True
 
     def show_loading(self, level: int) -> None:
         self.loading_title.text = f"LOADING LEVEL {level}"
@@ -124,9 +227,47 @@ class GameStateUI:
         self.loading_root.enabled = False
 
     def update(self) -> None:
+        if self.level_intro_timer > 0.0:
+            self.level_intro_timer -= time.dt
+            if self.level_intro_timer <= 0.0:
+                self.level_intro.enabled = False
+                self.level_intro_timer = 0.0
+
         if self.run.running:
             self.hud_time.text = format_mmss(self.run.survival_seconds)
             if self.level_banner_timer > 0.0:
                 self.level_banner_timer -= time.dt
                 if self.level_banner_timer <= 0.0:
                     self.level_banner.enabled = False
+        elif self.game_over_root.enabled and not self.game_over_hint.enabled:
+            self._update_game_over()
+        elif self.endgame_active and not self.endgame_finished:
+            self._update_endgame()
+
+    def _update_game_over(self) -> None:
+        self.game_over_fade_timer += time.dt
+        fade_elapsed = self.game_over_fade_timer - self.game_over_fade_delay
+        if fade_elapsed <= 0.0:
+            return
+
+        fade_progress = max(0.0, min(1.0, fade_elapsed / self.game_over_fade_duration))
+        self.game_over_backdrop.color = color.rgba(0, 0, 0, round(255 * fade_progress))
+        if fade_progress >= 1.0:
+            self.game_over_title.enabled = True
+            self.game_over_time.enabled = True
+            self.game_over_hint.enabled = True
+
+    def _update_endgame(self) -> None:
+        self.endgame_fade_timer += time.dt
+        fade_progress = max(0.0, min(1.0, self.endgame_fade_timer / self.endgame_fade_duration))
+        self.endgame_backdrop.color = color.rgba(0, 0, 0, round(255 * fade_progress))
+
+        if fade_progress >= 1.0 and not self.endgame_text.enabled:
+            self.endgame_text.enabled = True
+
+        if self.endgame_fade_timer >= self.endgame_fade_duration + self.endgame_hold_seconds:
+            # The fade/reveal animation is done; the "END GAME" screen now
+            # holds indefinitely until the player presses R or ESC (handled
+            # by the generic input() restart/quit logic in main.py).
+            self.endgame_hint.enabled = True
+            self.endgame_finished = True

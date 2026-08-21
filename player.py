@@ -42,6 +42,8 @@ class PlayerController(Entity):
         self.stamina_refill_rate = 0.95
         self.sprinting = False
         self.exhausted = False  # True from stamina=0 until fully refilled
+        self.no_sprint = False  # Level 10: player-monster cannot sprint at all
+        self.use_monster_footstep = False  # Level 10: play the monster's own footfall sound
         self.current_maze: MazeManager | None = None
         self._mouse_pointer_centered = False
         self._mouse_bias_x = 0.0
@@ -109,7 +111,7 @@ class PlayerController(Entity):
             move_direction = move_direction.normalized()
 
         sprint_key = held_keys["shift"] or held_keys["left shift"] or held_keys["right shift"]
-        can_sprint = sprint_key and moving and self.stamina > 0.0 and not self.exhausted
+        can_sprint = sprint_key and moving and self.stamina > 0.0 and not self.exhausted and not self.no_sprint
         self.sprinting = bool(can_sprint)
         if self.sprinting:
             speed = self.walk_speed * self.sprint_multiplier
@@ -132,6 +134,7 @@ class PlayerController(Entity):
 
         # Handle footstep sounds - loop while moving, stop when not moving
         if moving:
+            self.audio.set_footstep_monster_mode(self.use_monster_footstep)
             self.audio.set_footstep_sprinting(self.sprinting)
             if not self.audio.footstep_playing:
                 self.audio.play_footstep_loop()
