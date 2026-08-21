@@ -1,22 +1,21 @@
 # Liminal Vibes
 
-A first-person 3D liminal horror prototype built with Python + Ursina.
+A first-person 3D liminal horror game built with Python + Ursina, heavily vibe coded of course.
+The game is inspired by the "Backrooms" lore and feature film.
 
 ![A strange looking, empty office building hallway](resources/LiminalVibes.jpg)
 
-## Features
-- Finite maze levels that grow larger each time you reach the exit door in the wall.
-- Procedural textures on walls, floor, and ceiling for subtle surface detail.
-- First-person movement (`WASD`) and camera look with both arrow keys and mouse/touchpad.
-- Sprint with `Shift` plus stamina depletion/refill bar.
-- Monster spawns after exploration time, then chases player.
-- Monster starts slower, ramps speed in stepped phases with an upper cap.
-- Monster has simple procedural limb walk animation while moving.
-- Monster never spawns in your current line of sight.
-- When out of view, monster can occasionally teleport to another hidden location.
-- Level 5 becomes a one-way hallway challenge with the exit door at the far end.
-- On death: `GAME OVER` screen with survival time in `MM:SS`.
-- Every restart uses a new random seed.
+## Game Description
+- You are a child trapped in a strange, empty office building.
+- Explore a procedurally generated maze-like environment and try to reach the exit. 
+- It seems you are not entirely alone in the building...
+
+## Controls
+- Move: `WASD`
+- Look: Mouse/touchpad (or arrow keys)
+- FOV adjust: `Q` / `E`
+- Sprint: Hold `Shift`
+- Restart after death: `R`
 
 ## Quick Start
 
@@ -29,31 +28,24 @@ python main.py
 
 ## Test Mode
 
-Use test mode to spawn the monster immediately. In this mode, the monster still chases but cannot kill the player.
-An extra HUD appears with elapsed time, current monster speed, and whether the monster would have killed the player.
+Use test mode for more improved quality of life while testing. In this mode, the player is invincible and the mazes are small.
+An extra HUD appears with additional information.
 
 ```bash
 python main.py --test
 ```
 
-To enable test mode only when you reach level 5, use:
+To enable test mode only when you reach a specific level (for instance level 5), use:
 
 ```bash
 python main.py --test-level-5
 ```
 
-To jump directly to a specific level (for example, the level 5 hallway), use:
+To jump directly to a specific level (for instance level 5), use:
 
 ```bash
 python main.py --start-level 5
 ```
-
-## Controls
-- Move: `WASD`
-- Look: Arrow keys + mouse/touchpad
-- FOV adjust: `Q` / `E`
-- Sprint: Hold `Shift`
-- Restart after death: `R`
 
 ## Run Tests
 
