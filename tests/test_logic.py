@@ -279,6 +279,48 @@ class TestCoreLogic(unittest.TestCase):
         self.assertTrue(ui.game_over_hint.enabled)
         self.assertEqual(ui.game_over_backdrop.color[3], 255)
 
+    def test_level_9_transition_holds_black_cycles_text_and_then_reveals(self):
+        _install_fake_engine_modules()
+        from game_state import GameStateUI
+        from ursina import time as ursina_time
+
+        ui = GameStateUI()
+        ui.start_level9_transition()
+
+        self.assertTrue(ui.level9_transition_active)
+        self.assertFalse(ui.level9_transition_text.enabled)
+
+        ursina_time.dt = 2.9
+        ui.update()
+        self.assertFalse(ui.level9_transition_text.enabled)
+        self.assertGreater(ui.level9_transition_backdrop.color[3], 0)
+
+        ursina_time.dt = 0.2
+        ui.update()
+        self.assertTrue(ui.level9_transition_text.enabled)
+        self.assertEqual(ui.level9_transition_text.text, ui.level9_transition_messages[0])
+
+        ursina_time.dt = ui.level9_transition_sentence_duration
+        ui.update()
+        self.assertEqual(ui.level9_transition_text.text, ui.level9_transition_messages[1])
+
+        ursina_time.dt = ui.level9_transition_sentence_duration * (len(ui.level9_transition_messages) - 1)
+        ui.update()
+        self.assertTrue(ui.level9_transition_request_level_load)
+        self.assertFalse(ui.level9_transition_text.enabled)
+        self.assertEqual(ui.level9_transition_backdrop.color[3], 255)
+
+        ui.mark_level9_transition_level_loaded()
+        ursina_time.dt = ui.level9_transition_reveal_duration
+        ui.update()
+        self.assertTrue(ui.level9_transition_finished)
+        self.assertEqual(ui.level9_transition_backdrop.color[3], 0)
+
+        ui.complete_level9_transition()
+        self.assertFalse(ui.level9_transition_active)
+        self.assertTrue(ui.hud_time.enabled)
+        self.assertTrue(ui.hud_level.enabled)
+
     def test_format_mmss(self):
         self.assertEqual(format_mmss(0), "00:00")
         self.assertEqual(format_mmss(65.9), "01:05")
@@ -1130,6 +1172,41 @@ class TestCoreLogic(unittest.TestCase):
         with patch.object(game.audio, "play_monster_appearing", return_value=True) as mock_play:
             game._teleport_player()
             mock_play.assert_called_once()
+
+    def test_level_9_touch_starts_cutscene_before_loading_level_10(self):
+        try:
+            from main import LiminalVibesGame
+            from ursina import time as ursina_time
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from main import LiminalVibesGame
+            from ursina import time as ursina_time
+
+        game = LiminalVibesGame(test=True, start_level=9)
+        game.player.position = game.monster.position
+        ursina_time.dt = 0.1
+
+        game.update()
+        self.assertEqual(game.level, 9)
+        self.assertTrue(game._level9_transition_active)
+        self.assertTrue(game.ui.level9_transition_active)
+        self.assertFalse(game.player.enabled)
+
+        ursina_time.dt = (
+            game.ui.level9_transition_black_hold_seconds
+            + game.ui.level9_transition_sentence_duration * len(game.ui.level9_transition_messages)
+            + 0.1
+        )
+        game.update()
+        self.assertEqual(game.level, 10)
+        self.assertTrue(game.ui.level9_transition_level_loaded)
+        self.assertFalse(game.player.enabled)
+
+        ursina_time.dt = game.ui.level9_transition_reveal_duration
+        game.update()
+        self.assertEqual(game.level, 10)
+        self.assertFalse(game._level9_transition_active)
+        self.assertTrue(game.player.enabled)
 
     def test_level_10_catch_freezes_and_starts_the_endgame_sequence(self):
         try:

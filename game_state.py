@@ -142,6 +142,41 @@ class GameStateUI:
             enabled=False,
         )
 
+        self.level9_transition_messages = (
+            "You feel the cold embrace of the creature.",
+            "At first, an immense darkness fills your world.",
+            "But then, a sense of unity and calmness rushes over you.",
+            "It seems you have come home at last.",
+            "And you see the world from a new perspective.",
+        )
+        self.level9_transition_fade_duration = 1.5
+        self.level9_transition_black_hold_seconds = 3.0
+        self.level9_transition_sentence_duration = 3.0
+        self.level9_transition_reveal_duration = 1.5
+        self.level9_transition_active = False
+        self.level9_transition_request_level_load = False
+        self.level9_transition_level_loaded = False
+        self.level9_transition_finished = False
+        self.level9_transition_elapsed = 0.0
+        self.level9_transition_reveal_timer = 0.0
+        self.level9_transition_root = Entity(parent=camera.ui, enabled=False)
+        self.level9_transition_backdrop = Entity(
+            parent=self.level9_transition_root,
+            model="quad",
+            position=Vec3(0, 0, 0.02),
+            scale=Vec3(2.2, 1.3, 1),
+            color=color.rgba(0, 0, 0, 0),
+        )
+        self.level9_transition_text = Text(
+            parent=self.level9_transition_root,
+            text="",
+            position=(0, 0.02),
+            origin=(0, 0),
+            scale=1.15,
+            color=color.rgb(240, 240, 235),
+            enabled=False,
+        )
+
     def start_new_run(self, level: int = 1) -> None:
         self.run.running = True
         self.run.start_time = pytime.time()
@@ -158,6 +193,7 @@ class GameStateUI:
         self.endgame_finished = False
         self.endgame_root.enabled = False
         self.endgame_hint.enabled = False
+        self._reset_level9_transition()
         self.hud_time.enabled = True
         self.hud_level.enabled = True
         self.hud_time.text = "00:00"
@@ -218,6 +254,38 @@ class GameStateUI:
         self.endgame_hint.enabled = False
         self.endgame_root.enabled = True
 
+    def start_level9_transition(self) -> None:
+        self.hud_time.enabled = False
+        self.hud_level.enabled = False
+        self.level_banner.enabled = False
+        self.level_intro.enabled = False
+        self.loading_root.enabled = False
+        self.game_over_root.enabled = False
+        self.endgame_root.enabled = False
+        self.level9_transition_active = True
+        self.level9_transition_request_level_load = False
+        self.level9_transition_level_loaded = False
+        self.level9_transition_finished = False
+        self.level9_transition_elapsed = 0.0
+        self.level9_transition_reveal_timer = 0.0
+        self.level9_transition_backdrop.color = color.rgba(0, 0, 0, 0)
+        self.level9_transition_text.text = ""
+        self.level9_transition_text.enabled = False
+        self.level9_transition_root.enabled = True
+
+    def mark_level9_transition_level_loaded(self) -> None:
+        self.level9_transition_level_loaded = True
+        self.level9_transition_request_level_load = False
+        self.level9_transition_reveal_timer = 0.0
+        self.level9_transition_text.text = ""
+        self.level9_transition_text.enabled = False
+        self.level9_transition_backdrop.color = color.rgba(0, 0, 0, 255)
+
+    def complete_level9_transition(self) -> None:
+        self._reset_level9_transition()
+        self.hud_time.enabled = True
+        self.hud_level.enabled = True
+
     def show_loading(self, level: int) -> None:
         self.loading_title.text = f"LOADING LEVEL {level}"
         self.loading_hint.text = "Generating maze and preloading geometry..."
@@ -227,6 +295,10 @@ class GameStateUI:
         self.loading_root.enabled = False
 
     def update(self) -> None:
+        if self.level9_transition_active:
+            self._update_level9_transition()
+            return
+
         if self.level_intro_timer > 0.0:
             self.level_intro_timer -= time.dt
             if self.level_intro_timer <= 0.0:
@@ -271,3 +343,46 @@ class GameStateUI:
             # by the generic input() restart/quit logic in main.py).
             self.endgame_hint.enabled = True
             self.endgame_finished = True
+
+    def _update_level9_transition(self) -> None:
+        if not self.level9_transition_level_loaded:
+            self.level9_transition_elapsed += time.dt
+            fade_progress = max(0.0, min(1.0, self.level9_transition_elapsed / self.level9_transition_fade_duration))
+            self.level9_transition_backdrop.color = color.rgba(0, 0, 0, round(255 * fade_progress))
+
+            if self.level9_transition_elapsed < self.level9_transition_black_hold_seconds:
+                self.level9_transition_text.enabled = False
+                return
+
+            sentence_elapsed = self.level9_transition_elapsed - self.level9_transition_black_hold_seconds
+            total_sentence_duration = self.level9_transition_sentence_duration * len(self.level9_transition_messages)
+            if sentence_elapsed < total_sentence_duration:
+                index = min(int(sentence_elapsed / self.level9_transition_sentence_duration), len(self.level9_transition_messages) - 1)
+                self.level9_transition_text.text = self.level9_transition_messages[index]
+                self.level9_transition_text.enabled = True
+                self.level9_transition_backdrop.color = color.rgba(0, 0, 0, 255)
+                return
+
+            self.level9_transition_text.text = ""
+            self.level9_transition_text.enabled = False
+            self.level9_transition_backdrop.color = color.rgba(0, 0, 0, 255)
+            self.level9_transition_request_level_load = True
+            return
+
+        self.level9_transition_reveal_timer += time.dt
+        fade_progress = max(0.0, min(1.0, self.level9_transition_reveal_timer / self.level9_transition_reveal_duration))
+        self.level9_transition_backdrop.color = color.rgba(0, 0, 0, round(255 * (1.0 - fade_progress)))
+        if fade_progress >= 1.0:
+            self.level9_transition_finished = True
+
+    def _reset_level9_transition(self) -> None:
+        self.level9_transition_active = False
+        self.level9_transition_request_level_load = False
+        self.level9_transition_level_loaded = False
+        self.level9_transition_finished = False
+        self.level9_transition_elapsed = 0.0
+        self.level9_transition_reveal_timer = 0.0
+        self.level9_transition_root.enabled = False
+        self.level9_transition_backdrop.color = color.rgba(0, 0, 0, 0)
+        self.level9_transition_text.text = ""
+        self.level9_transition_text.enabled = False

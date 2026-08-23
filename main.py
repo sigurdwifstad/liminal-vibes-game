@@ -99,6 +99,7 @@ class LiminalVibesGame:
         self.child: ChildCharacter | None = None
         self._spider_drained_this_encounter = False
         self._level9_hug_played = False
+        self._level9_transition_active = False
         self._level10_out_of_sight = False
         self._level10_endgame_triggered = False
         self.ui = GameStateUI()
@@ -380,6 +381,27 @@ class LiminalVibesGame:
         self.ui.on_level_completed(level=self.level)
         self._load_level()
 
+    def _start_level9_transition(self) -> None:
+        if self.player is None:
+            return
+        self._level9_transition_active = True
+        self.player.set_active(False)
+        self.ui.start_level9_transition()
+
+    def _update_level9_transition(self) -> None:
+        if self.ui.level9_transition_request_level_load and not self.ui.level9_transition_level_loaded:
+            self.level += 1
+            self._load_level()
+            assert self.player is not None
+            self.player.set_active(False)
+            self.ui.mark_level9_transition_level_loaded()
+
+        if self.ui.level9_transition_finished:
+            self._level9_transition_active = False
+            self.ui.complete_level9_transition()
+            assert self.player is not None
+            self.player.set_active(True)
+
     def _update_level9(self) -> None:
         """Level 9 ("Give the monster a hug"): the friendly monster never
         chases, so this replaces the normal monster/spider AI updates. Playing
@@ -401,7 +423,7 @@ class LiminalVibesGame:
             self.audio.play_monster_hug()
 
         if remaining_distance <= self.monster.catch_distance:
-            self._advance_level()
+            self._start_level9_transition()
 
     def _update_level10(self) -> None:
         """Level 10 ("The final level"): the player has become the monster,
@@ -451,6 +473,11 @@ class LiminalVibesGame:
 
     def update(self) -> None:
         self.ui.update()
+        if self._level9_transition_active:
+            self._update_level9_transition()
+            self._update_hud()
+            return
+
         if self.ui.run.running:
             assert self.player is not None and self.maze is not None and self.monster is not None and self.spider is not None
             level_test_mode = self._is_test_mode_for_level()
