@@ -125,7 +125,7 @@ class GameStateUI:
         )
         self.endgame_text = Text(
             parent=self.endgame_root,
-            text="END GAME",
+            text="END OF GAME",
             position=(0, 0.05),
             origin=(0, 0),
             scale=4,
@@ -145,7 +145,7 @@ class GameStateUI:
         self.level9_transition_messages = (
             "You feel the cold embrace of the creature.",
             "At first, an immense darkness fills your world.",
-            "But then, a sense of unity and calmness rushes over you.",
+            "But then, a sense of calmness rushes over you.",
             "It seems you have come home at last.",
             "And you see the world from a new perspective.",
         )
