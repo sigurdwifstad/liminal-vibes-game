@@ -11,7 +11,7 @@ from panda3d.core import PNMImage, Texture as PandaTexture
 from audio import get_audio_manager
 from child import ChildCharacter
 from core_logic import format_mmss
-from game_state import GameStateUI
+from game_state import GameStateUI, get_ui_screen_layout
 from maze import MazeManager
 from monster import MonsterController, is_position_visible
 from spider_monster import SpiderController
@@ -108,8 +108,10 @@ class LiminalVibesGame:
         self.sun_light: DirectionalLight | None = None
 
         self._last_hud_color_key: str = ""   # throttle redundant stamina-bar color writes
+        self._last_layout_aspect_ratio: float | None = None
 
-        self._stamina_bar_x = -0.88
+        layout = get_ui_screen_layout()
+        self._stamina_bar_x = layout.left_x
         self._stamina_bar_y = -0.45
         self._stamina_bar_w = 0.34
         self._stamina_bar_h = 0.03
@@ -119,7 +121,7 @@ class LiminalVibesGame:
         self.test_hud = Text(
             parent=camera.ui,
             text="",
-            position=(0.58, 0.45),
+            position=(layout.right_x - 0.31, 0.45),
             scale=0.9,
             color=color.rgb(245, 245, 240),
             enabled=self.test,
@@ -143,7 +145,7 @@ class LiminalVibesGame:
             parent=camera.ui,
             model="quad",
             position=Vec3(0, 0, 0.06),
-            scale=Vec3(2.2, 1.3, 1),
+            scale=layout.fullscreen_scale,
             color=color.rgba(160, 0, 0, 30),
             enabled=False,
         )
@@ -151,12 +153,13 @@ class LiminalVibesGame:
             parent=camera.ui,
             model="quad",
             position=Vec3(0, 0, 0.05),
-            scale=Vec3(2.2, 1.3, 1),
+            scale=layout.fullscreen_scale,
             texture=_build_level10_vein_overlay_texture(),
             color=color.rgba(255, 255, 255, 255),
             enabled=False,
         )
 
+        self._refresh_screen_layout(force=True)
         self._setup_lighting()
         self.start_new_run()
 
@@ -357,6 +360,19 @@ class LiminalVibesGame:
         camera.position = Vec3(0, self.player.height, 0)
         camera.rotation = Vec3(self.player.pitch, 0, 0)
 
+    def _refresh_screen_layout(self, force: bool = False) -> None:
+        layout = get_ui_screen_layout()
+        if not force and self._last_layout_aspect_ratio is not None and abs(layout.aspect_ratio - self._last_layout_aspect_ratio) < 0.001:
+            return
+
+        self._last_layout_aspect_ratio = layout.aspect_ratio
+        self._stamina_bar_x = layout.left_x
+        self.stamina_bg.position = Vec3(self._stamina_bar_x, self._stamina_bar_y, 0)
+        self.stamina_fill.position = Vec3(self._stamina_bar_x, self._stamina_bar_y, -0.001)
+        self.test_hud.position = (layout.right_x - 0.31, 0.45)
+        self.level10_vision_tint.scale = layout.fullscreen_scale
+        self.level10_vein_overlay.scale = layout.fullscreen_scale
+
     def _show_death_closeup(self) -> None:
         if self.monster is None:
             return
@@ -472,6 +488,7 @@ class LiminalVibesGame:
         self.audio.play_monster_appearing(self.ui.run.survival_seconds)
 
     def update(self) -> None:
+        self._refresh_screen_layout()
         self.ui.update()
         if self._level9_transition_active:
             self._update_level9_transition()

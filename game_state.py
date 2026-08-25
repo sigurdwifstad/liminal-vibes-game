@@ -3,7 +3,7 @@ from __future__ import annotations
 import time as pytime
 from dataclasses import dataclass
 
-from ursina import Entity, Text, Vec3, camera, color, time
+from ursina import Entity, Text, Vec3, camera, color, time, window
 
 from core_logic import format_mmss
 
@@ -22,11 +22,56 @@ class RunState:
         return max(0.0, self.end_time - self.start_time)
 
 
+@dataclass(frozen=True)
+class UIScreenLayout:
+    aspect_ratio: float
+    left_x: float
+    right_x: float
+    fullscreen_scale: Vec3
+
+
+_DEFAULT_UI_ASPECT_RATIO = 16.0 / 9.0
+_HUD_MARGIN_X = 0.03
+_FULLSCREEN_OVERLAY_BLEED_X = 0.25
+_FULLSCREEN_OVERLAY_BLEED_Y = 0.30
+
+
+def _window_aspect_ratio() -> float:
+    aspect_ratio = getattr(window, "aspect_ratio", None)
+    if isinstance(aspect_ratio, (int, float)) and aspect_ratio > 0:
+        return float(aspect_ratio)
+
+    size = getattr(window, "size", None)
+    if isinstance(size, (tuple, list)) and len(size) >= 2:
+        width, height = size[0], size[1]
+        if height:
+            return float(width) / float(height)
+
+    width = getattr(size, "x", None)
+    height = getattr(size, "y", None)
+    if isinstance(width, (int, float)) and isinstance(height, (int, float)) and height > 0:
+        return float(width) / float(height)
+
+    return _DEFAULT_UI_ASPECT_RATIO
+
+
+def get_ui_screen_layout() -> UIScreenLayout:
+    aspect_ratio = _window_aspect_ratio()
+    half_width = aspect_ratio * 0.5
+    return UIScreenLayout(
+        aspect_ratio=aspect_ratio,
+        left_x=-half_width + _HUD_MARGIN_X,
+        right_x=half_width - _HUD_MARGIN_X,
+        fullscreen_scale=Vec3(aspect_ratio + _FULLSCREEN_OVERLAY_BLEED_X, 1.0 + _FULLSCREEN_OVERLAY_BLEED_Y, 1),
+    )
+
+
 class GameStateUI:
     def __init__(self):
         self.run = RunState(running=True, start_time=pytime.time())
-        self.hud_time = Text(text="00:00", position=(-0.86, 0.45), scale=1.2, color=color.white)
-        self.hud_level = Text(text="Level 1", position=(-0.86, 0.40), scale=1.1, color=color.rgb(242, 242, 235))
+        self._last_layout_aspect_ratio: float | None = None
+        self.hud_time = Text(text="00:00", position=(0, 0.45), scale=1.2, color=color.white)
+        self.hud_level = Text(text="Level 1", position=(0, 0.40), scale=1.1, color=color.rgb(242, 242, 235))
         self.level_banner_timer = 0.0
         self.level_banner = Text(text="", position=(0, 0.22), origin=(0, 0), scale=1.9, color=color.rgb(240, 230, 170), enabled=False)
         self.level_intro = Text(
@@ -45,7 +90,7 @@ class GameStateUI:
             parent=self.game_over_root,
             model="quad",
             position=Vec3(0, 0, 0.01),
-            scale=Vec3(2.2, 1.3, 1),
+            scale=Vec3(1, 1, 1),
             color=color.rgba(0, 0, 0, 0),
         )
         self.game_over_title = Text(
@@ -88,7 +133,7 @@ class GameStateUI:
             parent=self.loading_root,
             model="quad",
             position=Vec3(0, 0, 0),
-            scale=Vec3(2.2, 1.3, 1),
+            scale=Vec3(1, 1, 1),
             color=color.rgba(8, 8, 8, 235),
         )
         self.loading_title = Text(
@@ -120,7 +165,7 @@ class GameStateUI:
             parent=self.endgame_root,
             model="quad",
             position=Vec3(0, 0, 0),
-            scale=Vec3(2.2, 1.3, 1),
+            scale=Vec3(1, 1, 1),
             color=color.rgba(0, 0, 0, 0),
         )
         self.endgame_text = Text(
@@ -144,7 +189,7 @@ class GameStateUI:
 
         self.level9_transition_messages = (
             "You feel the cold embrace of the creature.",
-            "At first, an immense darkness fills your world.",
+            "At first, an immense darkness overwhelms you.",
             "But then, a sense of calmness rushes over you.",
             "It seems you have come home at last.",
             "And you see the world from a new perspective.",
@@ -164,7 +209,7 @@ class GameStateUI:
             parent=self.level9_transition_root,
             model="quad",
             position=Vec3(0, 0, 0.02),
-            scale=Vec3(2.2, 1.3, 1),
+            scale=Vec3(1, 1, 1),
             color=color.rgba(0, 0, 0, 0),
         )
         self.level9_transition_text = Text(
@@ -176,6 +221,20 @@ class GameStateUI:
             color=color.rgb(240, 240, 235),
             enabled=False,
         )
+        self.refresh_layout(force=True)
+
+    def refresh_layout(self, force: bool = False) -> None:
+        layout = get_ui_screen_layout()
+        if not force and self._last_layout_aspect_ratio is not None and abs(layout.aspect_ratio - self._last_layout_aspect_ratio) < 0.001:
+            return
+
+        self._last_layout_aspect_ratio = layout.aspect_ratio
+        self.hud_time.position = (layout.left_x, 0.45)
+        self.hud_level.position = (layout.left_x, 0.40)
+        self.game_over_backdrop.scale = layout.fullscreen_scale
+        self.loading_backdrop.scale = layout.fullscreen_scale
+        self.endgame_backdrop.scale = layout.fullscreen_scale
+        self.level9_transition_backdrop.scale = layout.fullscreen_scale
 
     def start_new_run(self, level: int = 1) -> None:
         self.run.running = True
@@ -295,9 +354,14 @@ class GameStateUI:
         self.loading_root.enabled = False
 
     def update(self) -> None:
+        self.refresh_layout()
         if self.level9_transition_active:
             self._update_level9_transition()
             return
+
+        if self.level_intro.enabled and self.level_intro_timer <= 0.0:
+            self.level_intro.enabled = False
+            self.level_intro_timer = 0.0
 
         if self.level_intro_timer > 0.0:
             self.level_intro_timer -= time.dt

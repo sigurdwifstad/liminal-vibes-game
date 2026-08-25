@@ -146,6 +146,17 @@ def _install_fake_engine_modules() -> None:
         def rotation_z(self, value):
             self._rotation_z = float(value)
 
+        @property
+        def scale(self):
+            return self._scale
+
+        @scale.setter
+        def scale(self, value):
+            if isinstance(value, (int, float)):
+                self._scale = _FakeVec3(value, value, value)
+            else:
+                self._scale = value
+
     class _FakeTexture:
         def __init__(self, *_args, **_kwargs):
             self.filtering = None
@@ -196,7 +207,14 @@ def _install_fake_engine_modules() -> None:
     fake_ursina.Ursina = lambda *args, **kwargs: SimpleNamespace(run=lambda: None)
     fake_ursina.camera = SimpleNamespace(ui=_FakeEntity(), parent=None, position=_FakeVec3(), rotation=_FakeVec3(), fov=86.0, rotation_x=0.0, rotation_y=0.0)
     fake_ursina.application = SimpleNamespace(quit=lambda: None)
-    fake_ursina.window = SimpleNamespace(title="", color=None, exit_button=SimpleNamespace(visible=False), fps_counter=SimpleNamespace(enabled=False))
+    fake_ursina.window = SimpleNamespace(
+        title="",
+        color=None,
+        aspect_ratio=16.0 / 9.0,
+        size=(1920, 1080),
+        exit_button=SimpleNamespace(visible=False),
+        fps_counter=SimpleNamespace(enabled=False),
+    )
     fake_ursina.scene = SimpleNamespace(fog_density=None, fog_color=None)
     fake_ursina.color = SimpleNamespace(
         black=(0, 0, 0),
@@ -278,6 +296,30 @@ class TestCoreLogic(unittest.TestCase):
         self.assertTrue(ui.game_over_time.enabled)
         self.assertTrue(ui.game_over_hint.enabled)
         self.assertEqual(ui.game_over_backdrop.color[3], 255)
+
+    def test_game_state_ui_reanchors_to_current_window_aspect_ratio(self):
+        _install_fake_engine_modules()
+        from game_state import GameStateUI, get_ui_screen_layout
+        from ursina import window as ursina_window
+
+        ui = GameStateUI()
+        initial_x = ui.hud_time.position[0]
+        original_aspect_ratio = ursina_window.aspect_ratio
+
+        try:
+            ursina_window.aspect_ratio = 16.0 / 10.0
+            ui.refresh_layout()
+            layout = get_ui_screen_layout()
+
+            self.assertNotEqual(ui.hud_time.position[0], initial_x)
+            self.assertEqual(ui.hud_time.position, (layout.left_x, 0.45))
+            self.assertEqual(ui.hud_level.position, (layout.left_x, 0.40))
+            self.assertEqual(ui.game_over_backdrop.scale.x, layout.fullscreen_scale.x)
+            self.assertEqual(ui.loading_backdrop.scale.x, layout.fullscreen_scale.x)
+            self.assertEqual(ui.endgame_backdrop.scale.x, layout.fullscreen_scale.x)
+            self.assertEqual(ui.level9_transition_backdrop.scale.x, layout.fullscreen_scale.x)
+        finally:
+            ursina_window.aspect_ratio = original_aspect_ratio
 
     def test_level_9_transition_holds_black_cycles_text_and_then_reveals(self):
         _install_fake_engine_modules()
@@ -1232,6 +1274,35 @@ class TestCoreLogic(unittest.TestCase):
         self.assertFalse(game.ui.run.running)
         self.assertTrue(game.ui.endgame_active)
         self.assertFalse(game.player.enabled)
+
+    def test_game_hud_reanchors_to_current_window_aspect_ratio(self):
+        try:
+            from main import LiminalVibesGame
+            from game_state import get_ui_screen_layout
+            from ursina import window as ursina_window
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from main import LiminalVibesGame
+            from game_state import get_ui_screen_layout
+            from ursina import window as ursina_window
+
+        game = LiminalVibesGame(test=True, start_level=5)
+        initial_x = game.stamina_bg.position.x
+        original_aspect_ratio = ursina_window.aspect_ratio
+
+        try:
+            ursina_window.aspect_ratio = 16.0 / 10.0
+            game._refresh_screen_layout()
+            game.ui.refresh_layout()
+            layout = get_ui_screen_layout()
+
+            self.assertNotEqual(game.stamina_bg.position.x, initial_x)
+            self.assertEqual(game.stamina_bg.position.x, layout.left_x)
+            self.assertEqual(game.stamina_fill.position.x, layout.left_x)
+            self.assertEqual(game.level10_vision_tint.scale.x, layout.fullscreen_scale.x)
+            self.assertEqual(game.level10_vein_overlay.scale.x, layout.fullscreen_scale.x)
+        finally:
+            ursina_window.aspect_ratio = original_aspect_ratio
 
     def test_endgame_screen_holds_until_restart_instead_of_auto_quitting(self):
         """The "END GAME" screen should stay up indefinitely once its
