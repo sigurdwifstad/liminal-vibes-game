@@ -86,6 +86,8 @@ class AudioManager:
         self.footstep_channel = None
         self.footstep_sound = None
         self.footstep_sprint_sound = None
+        self.footstep_boosted_sprint_sound = None
+        self.footstep_boosted = False
         self.footstep_sprinting = False
         self.footstep_playing = False
         # Level 10: the player-monster's own heavier footfall sound, played
@@ -102,6 +104,8 @@ class AudioManager:
         self.spider_walking_playing = False
         self.spider_attack_channel = None
         self.spider_attack_sound = None
+        self.gun_shot_sound = None
+        self.spray_can_sound = None
         self.intense_sequence_channel = None
         self.intense_sequence_sound = None
         self.dark_drone_channel = None
@@ -149,6 +153,10 @@ class AudioManager:
                 self.footstep_sound.set_volume(self.sfx_volume)
                 self.footstep_sprint_sound = self._build_playback_rate_sound(
                     self.footstep_sound, self.footstep_sprint_playback_rate
+                )
+                # Lightning bolt power-up: sprint is 1.5x faster, so footfalls are too.
+                self.footstep_boosted_sprint_sound = self._build_playback_rate_sound(
+                    self.footstep_sound, self.footstep_sprint_playback_rate * 1.5
                 )
                 print(f"Loaded footstep sound from {footstep_path}")
             else:
@@ -203,6 +211,22 @@ class AudioManager:
             else:
                 print(f"Warning: Spider attack sound not found at {spider_attack_path}")
                 self.spider_attack_sound = None
+
+            gun_shot_path = self.resources_path / "gun_shot.mp3"
+            if gun_shot_path.exists():
+                self.gun_shot_sound = pygame.mixer.Sound(str(gun_shot_path))
+                self.gun_shot_sound.set_volume(self.sfx_volume)
+            else:
+                print(f"Warning: Gun shot sound not found at {gun_shot_path}")
+                self.gun_shot_sound = None
+
+            spray_can_path = self.resources_path / "spray_can.mp3"
+            if spray_can_path.exists():
+                self.spray_can_sound = pygame.mixer.Sound(str(spray_can_path))
+                self.spray_can_sound.set_volume(self.sfx_volume)
+            else:
+                print(f"Warning: Spray can sound not found at {spray_can_path}")
+                self.spray_can_sound = None
 
             intense_sequence_path = self.resources_path / "intense_sequence.mp3"
             if intense_sequence_path.exists():
@@ -280,6 +304,8 @@ class AudioManager:
     def _current_footstep_sound(self):
         if self.use_monster_footstep and self.monster_footstep_sound is not None:
             return self.monster_footstep_sound
+        if self.footstep_sprinting and self.footstep_boosted and self.footstep_boosted_sprint_sound is not None:
+            return self.footstep_boosted_sprint_sound
         if self.footstep_sprinting and self.footstep_sprint_sound is not None:
             return self.footstep_sprint_sound
         return self.footstep_sound
@@ -355,6 +381,8 @@ class AudioManager:
             self.footstep_sound.set_volume(self.sfx_volume)
         if self.footstep_sprint_sound is not None:
             self.footstep_sprint_sound.set_volume(self.sfx_volume)
+        if self.footstep_boosted_sprint_sound is not None:
+            self.footstep_boosted_sprint_sound.set_volume(self.sfx_volume)
         if self.monster_footstep_sound is not None:
             self.monster_footstep_sound.set_volume(self.sfx_volume)
         if self.monster_appearing_sound is not None:
@@ -365,6 +393,10 @@ class AudioManager:
             self.spider_walking_sound.set_volume(self.sfx_volume)
         if self.spider_attack_sound is not None:
             self.spider_attack_sound.set_volume(self.sfx_volume)
+        if self.gun_shot_sound is not None:
+            self.gun_shot_sound.set_volume(self.sfx_volume)
+        if self.spray_can_sound is not None:
+            self.spray_can_sound.set_volume(self.sfx_volume)
         if self.intense_sequence_sound is not None:
             self.intense_sequence_sound.set_volume(self.sfx_volume)
 
@@ -404,6 +436,15 @@ class AudioManager:
                     print("Warning: Could not find available audio channel for footsteps")
             except Exception as e:
                 print(f"Warning: Failed to play footstep loop: {e}")
+
+    def set_footstep_boosted(self, boosted: bool) -> None:
+        boosted = bool(boosted)
+        if boosted == self.footstep_boosted:
+            return
+        self.footstep_boosted = boosted
+        if self.footstep_playing and self.footstep_sprinting:
+            self.stop_footstep_loop()
+            self.play_footstep_loop()
 
     def set_footstep_sprinting(self, sprinting: bool) -> None:
         sprinting = bool(sprinting)
@@ -632,6 +673,50 @@ class AudioManager:
             return True
         except Exception as e:
             print(f"Warning: Failed to play monster scream sound: {e}")
+            return False
+
+    def reset_sfx_cooldowns(self) -> None:
+        """Cooldowns compare against the run clock, which restarts at 0 on every
+        new run; stale timestamps would otherwise silence monster/spider sounds."""
+        self.last_monster_appearing_at = None
+        self.last_monster_scream_at = None
+        self.last_spider_attack_at = None
+
+    def play_spray_can(self) -> bool:
+        return self._play_oneshot(self.spray_can_sound, "spray can")
+
+    def _play_oneshot(self, sound, label: str) -> bool:
+        if not self.available or sound is None:
+            return False
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+            if channel is None:
+                return False
+            channel.set_volume(self.sfx_volume)
+            channel.play(sound)
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play {label} sound: {e}")
+            return False
+
+    def play_gun_shot(self) -> bool:
+        if not self.available or self.gun_shot_sound is None:
+            return False
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+            if channel is None:
+                return False
+            channel.set_volume(self.sfx_volume)
+            channel.play(self.gun_shot_sound)
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play gun shot sound: {e}")
             return False
 
     def play_spider_attack(self, current_time: float) -> bool:

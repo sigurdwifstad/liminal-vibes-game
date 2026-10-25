@@ -236,9 +236,11 @@ class GameStateUI:
         self.endgame_backdrop.scale = layout.fullscreen_scale
         self.level9_transition_backdrop.scale = layout.fullscreen_scale
 
-    def start_new_run(self, level: int = 1) -> None:
+    def start_new_run(self, level: int = 1, keep_timer: bool = False) -> None:
+        # Extra-life restarts carry on from the time of death instead of resetting.
+        elapsed = self.run.survival_seconds if keep_timer else 0.0
         self.run.running = True
-        self.run.start_time = pytime.time()
+        self.run.start_time = pytime.time() - elapsed
         self.run.end_time = 0.0
         self.run.level = level
         self.loading_root.enabled = False
@@ -248,6 +250,8 @@ class GameStateUI:
         self.game_over_time.enabled = False
         self.game_over_hint.enabled = False
         self.game_over_fade_timer = 0.0
+        self.game_over_title.text = "GAME OVER"
+        self.game_over_hint.text = "Press R to restart, ESC to quit"
         self.endgame_active = False
         self.endgame_finished = False
         self.endgame_root.enabled = False
@@ -255,7 +259,7 @@ class GameStateUI:
         self._reset_level9_transition()
         self.hud_time.enabled = True
         self.hud_level.enabled = True
-        self.hud_time.text = "00:00"
+        self.hud_time.text = format_mmss(elapsed)
         self.hud_level.text = f"Level {self.run.level}"
         self.level_banner.enabled = False
         self.level_banner_timer = 0.0
@@ -275,7 +279,18 @@ class GameStateUI:
         self.level_banner.enabled = True
         self.level_banner_timer = 2.0
 
-    def on_player_caught(self) -> None:
+    def on_player_caught(self, extra_life_level: int | None = None) -> None:
+        if extra_life_level is None:
+            self.game_over_title.text = "GAME OVER"
+            self.game_over_title.scale = 3
+            self.game_over_title.color = color.rgb(255, 70, 70)
+            self.game_over_hint.text = "Press R to restart, ESC to quit"
+        else:
+            self.game_over_title.text = "YOU HAVE AN EXTRA LIFE"
+            self.game_over_title.scale = 2.4
+            self.game_over_title.color = color.rgb(235, 60, 75)
+            self.game_over_hint.text = f"Press R to restart from level {extra_life_level}"
+
         self.run.running = False
         self.run.end_time = pytime.time()
         self.hud_time.enabled = False

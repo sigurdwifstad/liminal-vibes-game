@@ -8,7 +8,7 @@ from typing import Iterable, List, Set, Tuple
 from panda3d.core import PNMImage, Texture as PandaTexture
 from ursina import Entity, Mesh, Texture, Vec3, color, destroy
 
-from core_logic import touches_exit_portal
+from core_logic import find_dead_ends, touches_exit_portal
 
 Cell = Tuple[int, int]
 
@@ -708,6 +708,32 @@ class MazeManager:
         self._floor_entities.clear()
         self._ceiling_entities.clear()
         self._wall_entities.clear()
+
+    def raycast_wall(self, origin: Vec3, direction: Vec3, max_distance: float) -> tuple[Vec3, Vec3] | None:
+        """March a ray through the grid; return (hit point, wall normal pointing into
+        the corridor) for the first wall face hit within `max_distance`, else None."""
+        step = 0.05
+        dist = 0.0
+        half = self.cell_size * 0.5
+        while dist < max_distance:
+            dist += step
+            p = origin + direction * dist
+            if p.y < 0.0 or p.y > self.wall_height:
+                return None
+            cell = self.cell_from_world(p)
+            if cell in self.walkable_cells:
+                continue
+            cx, cz = self.world_from_cell(cell)
+            dx, dz = p.x - cx, p.z - cz
+            if abs(dx) > abs(dz):
+                sign = 1.0 if dx > 0 else -1.0
+                return Vec3(cx + sign * half, p.y, p.z), Vec3(sign, 0, 0)
+            sign = 1.0 if dz > 0 else -1.0
+            return Vec3(p.x, p.y, cz + sign * half), Vec3(0, 0, sign)
+        return None
+
+    def dead_end_cells(self) -> List[Cell]:
+        return find_dead_ends(self.walkable_cells, exclude=(self.start_cell, self.exit_cell))
 
     def entities_near_cell(self, cell: Cell, hops: int = 2) -> List[Entity]:
         """Collect floor/ceiling/wall entities reachable from `cell` by walking the

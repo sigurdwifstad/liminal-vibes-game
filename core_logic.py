@@ -64,3 +64,36 @@ def monster_arm_reach_factor(distance_to_player: float, reach_start_distance: fl
     normalized = (reach_start_distance - distance_to_player) / (reach_start_distance - full_reach_distance)
     return normalized * normalized * (3.0 - 2.0 * normalized)
 
+
+
+POWERUP_EXCLUDED_LEVELS = (1, 5, 7, 9, 10)
+
+
+def level_has_powerups(level: int) -> bool:
+    return level not in POWERUP_EXCLUDED_LEVELS
+
+
+def find_dead_ends(walkable: set, exclude: tuple = ()) -> list:
+    """Walkable cells with exactly one walkable 4-neighbour, sorted for determinism."""
+    result = []
+    for x, z in walkable:
+        count = sum(1 for n in ((x + 1, z), (x - 1, z), (x, z + 1), (x, z - 1)) if n in walkable)
+        if count == 1 and (x, z) not in exclude:
+            result.append((x, z))
+    return sorted(result)
+
+
+def ray_hits_sphere(origin, direction, center, radius: float, max_distance: float = 1e9):
+    """Distance along a normalized ray to a sphere, or None on a miss."""
+    ox, oy, oz = origin
+    dx, dy, dz = direction
+    lx, ly, lz = center[0] - ox, center[1] - oy, center[2] - oz
+    t_closest = lx * dx + ly * dy + lz * dz
+    if t_closest < 0:
+        return None
+    dist_sq = lx * lx + ly * ly + lz * lz - t_closest * t_closest
+    if dist_sq > radius * radius:
+        return None
+    t = t_closest - (radius * radius - dist_sq) ** 0.5
+    t = max(0.0, t)
+    return t if t <= max_distance else None

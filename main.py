@@ -10,12 +10,13 @@ from panda3d.core import PNMImage, Texture as PandaTexture
 
 from audio import get_audio_manager
 from child import ChildCharacter
-from core_logic import format_mmss
+from core_logic import format_mmss, ray_hits_sphere
 from game_state import GameStateUI, get_ui_screen_layout
 from maze import MazeManager
 from monster import MonsterController, is_position_visible
 from spider_monster import SpiderController
 from player import PlayerController
+from powerups import PowerUpHUD, PowerUpManager, PowerUpType
 
 
 _ACTIVE_GAME: LiminalVibesGame | None = None
@@ -117,6 +118,12 @@ class LiminalVibesGame:
         self._stamina_bar_h = 0.03
         self.stamina_bg = Entity(parent=camera.ui, model="quad", position=Vec3(self._stamina_bar_x, self._stamina_bar_y, 0), scale=Vec3(self._stamina_bar_w, self._stamina_bar_h, 1), color=color.rgba(18, 18, 18, 180), origin=(-0.5, 0.5))
         self.stamina_fill = Entity(parent=camera.ui, model="quad", position=Vec3(self._stamina_bar_x, self._stamina_bar_y, -0.001), scale=Vec3(self._stamina_bar_w, self._stamina_bar_h * 0.82, 1), color=color.rgb(110, 210, 120), origin=(-0.5, 0.5))
+
+        self.powerups = PowerUpManager()
+        self.projectiles: list[Entity] = []
+        self.spray_marks: list[Entity] = []
+        self.spray_cooldown = 0.0
+        self.powerup_hud = PowerUpHUD(layout.left_x, self._stamina_bar_y)
 
         self.test_hud = Text(
             parent=camera.ui,
@@ -270,6 +277,10 @@ class LiminalVibesGame:
         self.player.pitch = 0
         self._restore_player_camera()
         self.player.set_active(True)
+        self.player.sprint_speed_bonus = 1.0
+        self._clear_projectiles()
+        self._clear_spray_marks()
+        self.powerups.spawn_for_level(self.maze, self.level)
 
         if self.monster is None:
             self.monster = MonsterController(position=Vec3(0, -1000, 0))
@@ -341,6 +352,11 @@ class LiminalVibesGame:
 
     def _setup_level7_sun_light(self) -> None:
         if self.sun_light is not None:
+            # Panda keeps a stale LightAttrib on the scene root unless the light
+            # is explicitly unset, so the level 7 sun would keep lighting later levels.
+            light_np = self.sun_light.get_child(0)
+            if not light_np.is_empty():
+                light_np.get_top().clear_light(light_np)
             destroy(self.sun_light)
             self.sun_light = None
 
@@ -370,6 +386,7 @@ class LiminalVibesGame:
         self.stamina_bg.position = Vec3(self._stamina_bar_x, self._stamina_bar_y, 0)
         self.stamina_fill.position = Vec3(self._stamina_bar_x, self._stamina_bar_y, -0.001)
         self.test_hud.position = (layout.right_x - 0.31, 0.45)
+        self.powerup_hud.set_left_x(layout.left_x)
         self.level10_vision_tint.scale = layout.fullscreen_scale
         self.level10_vein_overlay.scale = layout.fullscreen_scale
 
@@ -382,13 +399,14 @@ class LiminalVibesGame:
         camera.look_at(focus)
         camera.rotation = Vec3(camera.rotation_x, camera.rotation_y, 0)
 
-    def start_new_run(self, level: int | None = None) -> None:
+    def start_new_run(self, level: int | None = None, keep_timer: bool = False) -> None:
         """Begin a fresh run. `level` defaults to `self.start_level` (the
         CLI --start-level, used for the very first run / dev testing); an
         explicit `level` overrides that -- used by the "R" restart key to
         always return to level 1 regardless of how the run was launched."""
         self.level = self.start_level if level is None else level
-        self.ui.start_new_run(level=self.level)
+        self.ui.start_new_run(level=self.level, keep_timer=keep_timer)
+        self.audio.reset_sfx_cooldowns()
         self.audio.play_ambient_loop()
         self._load_level()
 
@@ -474,6 +492,111 @@ class LiminalVibesGame:
         is_player_visible_to_child = is_position_visible(self.maze, self.child.world_position, self.child.forward, player_pos)
         self._level10_out_of_sight = not is_player_visible_to_child
 
+    SPRAY_COOLDOWN_SECONDS = 2.0
+    SPRAY_RANGE = 2.5
+
+    def _clear_spray_marks(self) -> None:
+        for mark in self.spray_marks:
+            destroy(mark)
+        self.spray_marks.clear()
+        self.spray_cooldown = 0.0
+
+    def _use_spray_can(self) -> None:
+        """Paint a red X on the wall the player is close to and looking at."""
+        if (
+            not self.ui.run.running
+            or self.player is None
+            or not self.player.enabled
+            or self.maze is None
+            or PowerUpType.SPRAY not in self.powerups.held
+            or self.spray_cooldown > 0.0
+        ):
+            return
+        forward = camera.forward
+        hit = self.maze.raycast_wall(camera.world_position, Vec3(forward.x, forward.y, forward.z).normalized(), self.SPRAY_RANGE)
+        if hit is None:
+            return
+        point, normal = hit
+        self.spray_cooldown = self.SPRAY_COOLDOWN_SECONDS
+        self.audio.play_spray_can()
+
+        root = Entity(position=point + normal * 0.02)
+        root.look_at(root.position - normal)
+        red = color.rgb(200, 15, 20)
+        for angle in (45, -45):
+            Entity(parent=root, model="quad", scale=Vec3(0.9, 0.12, 1), rotation_z=angle, color=red, unlit=True, double_sided=True)
+        self.spray_marks.append(root)
+
+    PROJECTILE_SPEED = 70.0
+    PROJECTILE_MAX_DISTANCE = 80.0
+
+    def _clear_projectiles(self) -> None:
+        for projectile in self.projectiles:
+            destroy(projectile)
+        self.projectiles.clear()
+
+    def _fire_gun(self) -> None:
+        """Spend the one-shot gun and launch a projectile along the crosshair."""
+        if (
+            not self.ui.run.running
+            or self.player is None
+            or not self.player.enabled
+            or self.maze is None
+            or not self.powerups.gun_ready
+        ):
+            return
+        self.powerups.consume(PowerUpType.GUN)
+        self.audio.play_gun_shot()
+
+        forward = camera.forward
+        start = camera.world_position + forward * 0.6 + Vec3(0, -0.12, 0)
+        projectile = Entity(model="sphere", position=start, scale=0.14, color=color.rgb(255, 235, 140), unlit=True)
+        projectile.direction = Vec3(forward.x, forward.y, forward.z).normalized()
+        projectile.travelled = 0.0
+        self.projectiles.append(projectile)
+
+    def _update_projectiles(self) -> None:
+        if not self.projectiles or self.maze is None or self.monster is None or self.spider is None:
+            return
+        elapsed = self.ui.run.survival_seconds
+        for projectile in list(self.projectiles):
+            step = self.PROJECTILE_SPEED * time.dt
+            d = projectile.direction
+            origin = projectile.position
+            o = (origin.x, origin.y, origin.z)
+            direction = (d.x, d.y, d.z)
+
+            hit_target = None
+            best = step
+            if self.monster.spawned and self.monster.visible and not self.monster.static_crucified:
+                p = self.monster.world_position
+                t = ray_hits_sphere(o, direction, (p.x, 1.2, p.z), 1.1, best)
+                if t is not None:
+                    hit_target, best = "monster", t
+            if self.spider.spawned and self.spider.visible:
+                p = self.spider.world_position
+                t = ray_hits_sphere(o, direction, (p.x, 0.35, p.z), 0.7, best)
+                if t is not None:
+                    hit_target, best = "spider", t
+
+            if hit_target == "monster":
+                self.monster.hit_by_bullet(self.maze, self.player.world_position, self.player.forward, elapsed)
+            elif hit_target == "spider":
+                self.spider.hit_by_bullet(elapsed)
+            if hit_target is not None:
+                self.projectiles.remove(projectile)
+                destroy(projectile)
+                continue
+
+            new_pos = origin + d * step
+            projectile.travelled += step
+            hit_wall = not self.maze.is_walkable_cell(self.maze.cell_from_world(Vec3(new_pos.x, 0, new_pos.z)))
+            if hit_wall or projectile.travelled >= self.PROJECTILE_MAX_DISTANCE or new_pos.y < 0.0 or new_pos.y > self.maze.wall_height:
+                self.projectiles.remove(projectile)
+                destroy(projectile)
+            else:
+                projectile.position = new_pos
+
     def _teleport_player(self) -> None:
         """Level 10: teleport the player-monster to a random walkable cell,
         available only while out of the child's sight (see `_update_level10`
@@ -502,6 +625,12 @@ class LiminalVibesGame:
                 self._advance_level()
                 return
 
+            self._update_projectiles()
+            self.spray_cooldown = max(0.0, self.spray_cooldown - time.dt)
+            for kind in self.powerups.update(time.dt, self.player.world_position):
+                if kind is PowerUpType.LIGHTNING:
+                    self.player.sprint_speed_bonus = 1.5
+
             if self.level == 7:
                 if self.audio.update_einkvan_sequence():
                     self.maze.unlock_pyramid_door()
@@ -520,8 +649,10 @@ class LiminalVibesGame:
                 )
                 if caught:
                     self.player.set_active(False)
+                    self._clear_projectiles()
                     self._show_death_closeup()
-                    self.ui.on_player_caught()
+                    has_extra_life = PowerUpType.HEART in self.powerups.held
+                    self.ui.on_player_caught(extra_life_level=self.level if has_extra_life else None)
                     return
 
                 if self.level != 5:
@@ -560,6 +691,7 @@ class LiminalVibesGame:
         self.stamina_bg.enabled = is_running and not is_level_10
         self.stamina_fill.enabled = is_running and not is_level_10
         self.teleport_hint.enabled = is_running and is_level_10 and self._level10_out_of_sight
+        self.powerup_hud.refresh(self.powerups.held, show=is_running and self.player.enabled)
 
         if is_level_10:
             self._update_test_hud()
@@ -608,7 +740,17 @@ class LiminalVibesGame:
             return
 
         if key == "r" and not self.ui.run.running:
-            self.start_new_run(level=1)
+            # The extra life restarts the current level instead of level 1.
+            has_extra_life = PowerUpType.HEART in self.powerups.held
+            self.start_new_run(level=self.level if has_extra_life else 1, keep_timer=has_extra_life)
+            return
+
+        if key == "space":
+            self._use_spray_can()
+            return
+
+        if key == "left mouse down":
+            self._fire_gun()
             return
 
         if key in ("shift", "left shift", "right shift"):

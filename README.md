@@ -16,6 +16,14 @@ The game is inspired by the "Backrooms" lore and feature film.
 - FOV adjust: `Q` / `E`
 - Sprint: Hold `Shift`
 - Restart after death: `R`
+- Shoot (with the gun power-up): Left click
+
+## Power-ups
+Regular levels (not 1, 5, 7, 9, 10) hide four unique power-ups in maze dead ends. All are lost on death or when leaving the level.
+- Red heart: after dying, `R` restarts the current level instead of level 1 (the death screen says so).
+- Lightning bolt: sprint speed x1.5.
+- Spray can: press `Space` while close to and facing a wall to mark it with a red X (2 second cooldown).
+- Gun: one shot per level (left click, aimed at the crosshair). The shot is a visible projectile; if it hits, the monster teleports away or the spider is removed.
 
 ## Quick Start
 
@@ -76,6 +84,11 @@ this automatically using GitHub-hosted Windows and macOS runners:
 
 No local setup is required to use this — it all runs in CI.
 
+If a tagged release ends up with only GitHub's auto-generated source archives
+and no installer assets, the workflow failed before uploading the installers.
+After fixing the workflow, push a new tag (for example `v1.0.1`) or rerun the
+workflow for the existing tag so the `.exe` and `.dmg` can be attached.
+
 ### Building locally
 
 To build on your own machine instead, run the matching OS's steps:
@@ -90,4 +103,3 @@ python build_installer.py
   Output: `installer/Output/LiminalVibesSetup.exe`.
 - On macOS this uses only built-in tools (`hdiutil`). Output:
   `dist/LiminalVibes.dmg`.
-

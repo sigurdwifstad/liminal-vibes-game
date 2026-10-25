@@ -49,7 +49,7 @@ except ModuleNotFoundError:
     )
 
 from audio import AudioManager, can_play_after_cooldown, clamp_volume
-from core_logic import adjust_fov, format_mmss, monster_arm_reach_factor, phased_speed, touches_exit_portal
+from core_logic import adjust_fov, find_dead_ends, format_mmss, level_has_powerups, ray_hits_sphere, monster_arm_reach_factor, phased_speed, touches_exit_portal
 
 
 def _install_fake_engine_modules() -> None:
@@ -1354,6 +1354,25 @@ class TestCoreLogic(unittest.TestCase):
         self.assertEqual(game.level, 1)
         self.assertEqual(game.start_level, 5)
         self.assertTrue(game.ui.run.running)
+
+
+class TestPowerUpLogic(unittest.TestCase):
+    def test_dead_ends_exclude_start_and_junctions(self):
+        walkable = {(0, 0), (1, 0), (2, 0), (1, 1)}
+        self.assertEqual(find_dead_ends(walkable), [(0, 0), (1, 1), (2, 0)])
+        self.assertEqual(find_dead_ends(walkable, exclude=((0, 0),)), [(1, 1), (2, 0)])
+
+    def test_levels_with_powerups(self):
+        for level in (2, 3, 4, 6, 8):
+            self.assertTrue(level_has_powerups(level))
+        for level in (1, 5, 7, 9, 10):
+            self.assertFalse(level_has_powerups(level))
+
+    def test_ray_sphere(self):
+        self.assertAlmostEqual(ray_hits_sphere((0, 0, 0), (0, 0, 1), (0, 0, 5), 1.0), 4.0)
+        self.assertIsNone(ray_hits_sphere((0, 0, 0), (0, 0, 1), (3, 0, 5), 1.0))
+        self.assertIsNone(ray_hits_sphere((0, 0, 0), (0, 0, 1), (0, 0, -5), 1.0))
+        self.assertIsNone(ray_hits_sphere((0, 0, 0), (0, 0, 1), (0, 0, 5), 1.0, max_distance=2.0))
 
 
 if __name__ == "__main__":

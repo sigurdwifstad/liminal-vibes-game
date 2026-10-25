@@ -374,6 +374,19 @@ class MonsterController(Entity):
             return self._rng.choice(hidden)
         return None
 
+    def hit_by_bullet(self, maze: MazeManager, player_position: Vec3, player_forward: Vec3 | None, run_elapsed: float) -> None:
+        """Force the monster to teleport to a cell hidden from the player."""
+        self._rng.seed(maze.seed + int(run_elapsed * 1000.0))
+        cell = self._pick_hidden_cell(maze, player_position, player_forward, min_dist=10, max_dist=32)
+        if cell is not None:
+            tx, tz = maze.world_from_cell(cell)
+            self.position = Vec3(tx, 0.0, tz)
+        self.path_cells.clear()
+        self.path_refresh_timer = 0.0
+        self._appearing_sound_pending = True
+        self._was_visible_to_player = False
+        self.audio.play_monster_scream(run_elapsed)
+
     def cleanup(self) -> None:
         for part in self.visual_parts:
             destroy(part)

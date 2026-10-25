@@ -15,6 +15,9 @@ on:
       - "v*"
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -44,6 +47,7 @@ jobs:
         with:
           name: LiminalVibesSetup-windows
           path: installer/Output/LiminalVibesSetup.exe
+          if-no-files-found: error
 
   build-macos:
     runs-on: macos-latest
@@ -63,17 +67,20 @@ jobs:
         run: pyinstaller --noconfirm --clean LiminalVibes.spec
 
       - name: Build macOS .dmg
-        run: installer/build_macos_dmg.sh
+        run: bash installer/build_macos_dmg.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: LiminalVibes-macos
           path: dist/LiminalVibes.dmg
+          if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -82,6 +89,7 @@ jobs:
       - name: Create/update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          fail_on_unmatched_files: true
           files: |
             artifacts/LiminalVibesSetup-windows/LiminalVibesSetup.exe
             artifacts/LiminalVibes-macos/LiminalVibes.dmg

@@ -17,6 +17,7 @@ class PlayerController(Entity):
         self.walk_speed = 6.0
         self.exhausted_walk_speed = 2.0
         self.sprint_multiplier = 1.65
+        self.sprint_speed_bonus = 1.0  # Lightning bolt power-up sets this to 1.5
         self.height = 1.7
         self.collider_radius = 0.45
         self.look_speed = 200.0
@@ -114,7 +115,7 @@ class PlayerController(Entity):
         can_sprint = sprint_key and moving and self.stamina > 0.0 and not self.exhausted and not self.no_sprint
         self.sprinting = bool(can_sprint)
         if self.sprinting:
-            speed = self.walk_speed * self.sprint_multiplier
+            speed = self.walk_speed * self.sprint_multiplier * self.sprint_speed_bonus
             self.stamina = max(0.0, self.stamina - self.stamina_drain_rate * time.dt)
             if self.stamina <= 0.0:
                 if not self.exhausted:
@@ -135,6 +136,7 @@ class PlayerController(Entity):
         # Handle footstep sounds - loop while moving, stop when not moving
         if moving:
             self.audio.set_footstep_monster_mode(self.use_monster_footstep)
+            self.audio.set_footstep_boosted(self.sprint_speed_bonus > 1.0)
             self.audio.set_footstep_sprinting(self.sprinting)
             if not self.audio.footstep_playing:
                 self.audio.play_footstep_loop()

@@ -171,6 +171,15 @@ class SpiderController(Entity):
         self._drain_delay = 0.0
         self._set_leg_pose(0.0)
 
+    def hit_by_bullet(self, run_elapsed: float) -> None:
+        """Shot spider disappears for good this encounter."""
+        self.audio.play_spider_attack(run_elapsed)
+        self.reset()
+        self._drain_complete = True
+        self.spawned = True  # stays "spawned" but drained so it never respawns
+        self.visible = False
+        self.enabled = False
+
     @property
     def drain_complete(self) -> bool:
         return self._drain_complete
@@ -313,6 +322,14 @@ class SpiderController(Entity):
         # Only spawn at level 3+ (unless in test mode, indicated by spawn_delay_seconds = 0)
         if level < 3 and self.spawn_delay_seconds > 0:
             self.audio.stop_spider_walking_loop()
+            return False
+
+        # A spider that already attacked (or was shot) is gone for the level; it must
+        # not respawn as an inanimate model.
+        if self._drain_complete:
+            self.audio.stop_spider_walking_loop()
+            self.enabled = False
+            self.visible = False
             return False
 
         if not self.spawned and run_elapsed >= self.spawn_delay_seconds:
