@@ -82,6 +82,7 @@ def _build_level12_vein_overlay_texture(size: int = 256) -> Texture:
 
 class LiminalVibesGame:
     POWERUP_HINT_DURATION = 3.0
+    LEVEL12_TELEPORT_COOLDOWN_SECONDS = 5.0
     POWERUP_HINT_TEXT = {
         PowerUpType.SPRAY: "Press Space to use spray can",
         PowerUpType.GUN: "Left click to fire gun",
@@ -110,6 +111,7 @@ class LiminalVibesGame:
         self._level9_hug_played = False
         self._level9_transition_active = False
         self._level12_out_of_sight = False
+        self._level12_teleport_cooldown = 0.0
         self._level12_endgame_triggered = False
         self.ui = GameStateUI()
         self.audio = get_audio_manager()
@@ -345,6 +347,7 @@ class LiminalVibesGame:
             self.child = ChildCharacter(position=Vec3(0, -1000, 0))
         self.child.reset()
         self._level12_out_of_sight = False
+        self._level12_teleport_cooldown = 0.0
         self._level12_endgame_triggered = False
         self.player.no_sprint = self.level == 12
         self.player.use_monster_footstep = self.level == 12
@@ -650,12 +653,13 @@ class LiminalVibesGame:
         available only while out of the child's sight (see `_update_level12`
         and `input`). Plays the `monster_appearing` stinger as the
         player-monster reappears elsewhere in the maze."""
-        if self.player is None or self.maze is None:
+        if self.player is None or self.maze is None or self._level12_teleport_cooldown > 0.0:
             return
         player_cell = self.maze.cell_from_world(self.player.world_position)
         target_cell = self.maze.random_far_walkable_cell(player_cell, min_dist=10)
         tx, tz = self.maze.world_from_cell(target_cell)
         self.player.position = Vec3(tx, 0.0, tz)
+        self._level12_teleport_cooldown = self.LEVEL12_TELEPORT_COOLDOWN_SECONDS
         self.audio.play_monster_appearing(self.ui.run.survival_seconds)
 
     def _show_first_powerup_hint(self, kind: PowerUpType) -> None:
@@ -701,6 +705,8 @@ class LiminalVibesGame:
 
             self._update_projectiles()
             self.spray_cooldown = max(0.0, self.spray_cooldown - time.dt)
+            if self.level == 12:
+                self._level12_teleport_cooldown = max(0.0, self._level12_teleport_cooldown - time.dt)
             for kind in self.powerups.update(time.dt, self.player.world_position):
                 self._show_first_powerup_hint(kind)
                 if kind is PowerUpType.LIGHTNING:
@@ -767,7 +773,12 @@ class LiminalVibesGame:
         is_level_12 = self.level == 12
         self.stamina_bg.enabled = is_running and not is_level_12
         self.stamina_fill.enabled = is_running and not is_level_12
-        self.teleport_hint.enabled = is_running and is_level_12 and self._level12_out_of_sight
+        self.teleport_hint.enabled = (
+            is_running
+            and is_level_12
+            and self._level12_out_of_sight
+            and self._level12_teleport_cooldown <= 0.0
+        )
         self.powerup_hud.refresh(self.powerups.held, show=is_running and self.player.enabled)
 
         if is_level_12:
@@ -831,7 +842,12 @@ class LiminalVibesGame:
             return
 
         if key in ("shift", "left shift", "right shift"):
-            if self.level == 12 and self.ui.run.running and self._level12_out_of_sight:
+            if (
+                self.level == 12
+                and self.ui.run.running
+                and self._level12_out_of_sight
+                and self._level12_teleport_cooldown <= 0.0
+            ):
                 self._teleport_player()
 
 

@@ -16,6 +16,18 @@ class PowerUpType(Enum):
     SPRAY = "spray"
 
 
+def powerups_for_level(level: int) -> tuple[PowerUpType, ...]:
+    if not level_has_powerups(level):
+        return ()
+    if level == 2:
+        return (PowerUpType.HEART,)
+    if level == 3:
+        return (PowerUpType.HEART, PowerUpType.SPRAY)
+    if level == 4:
+        return (PowerUpType.HEART, PowerUpType.SPRAY, PowerUpType.LIGHTNING)
+    return tuple(PowerUpType)
+
+
 # Lightning bolt as one solid polygon (no seams between parts), triangulated by hand.
 _BOLT_POINTS = ((0.12, 0.5), (-0.22, -0.04), (-0.02, -0.04), (-0.12, -0.5), (0.22, 0.06), (0.02, 0.06))
 _BOLT_TRIANGLES = ((0, 1, 2), (0, 2, 5), (2, 4, 5), (2, 3, 4))
@@ -132,19 +144,20 @@ class PowerUpManager:
 
     def spawn_for_level(self, maze, level: int) -> None:
         self.clear()
-        if not level_has_powerups(level):
+        available_powerups = powerups_for_level(level)
+        if not available_powerups:
             return
         rng = random.Random(f"{maze.seed}|powerups|{level}")
         cells = maze.dead_end_cells()
         rng.shuffle(cells)
-        count = len(PowerUpType)
+        count = len(available_powerups)
         chosen = cells[:count]
         if len(chosen) < count:
             used = set(chosen) | {maze.start_cell, maze.exit_cell}
             spare = sorted(c for c in maze.walkable_cells if c not in used)
             rng.shuffle(spare)
             chosen += spare[: count - len(chosen)]
-        for index, (kind, cell) in enumerate(zip(PowerUpType, chosen)):
+        for index, (kind, cell) in enumerate(zip(available_powerups, chosen)):
             wx, wz = maze.world_from_cell(cell)
             self.pickups.append(PowerUpPickup(kind, Vec3(wx, 0, wz), phase=index * 2.1))
 

@@ -16,10 +16,9 @@ The game is inspired by the "Backrooms" lore and feature film.
 - FOV adjust: `Q` / `E`
 - Sprint: Hold `Shift`
 - Restart after death: `R`
-- Shoot (with the gun power-up): Left click
 
 ## Power-ups
-Regular levels (not 1, 5, 7, 10, 11, 12) hide four unique power-ups in maze dead ends. Level 9 is a furnished maze; level 10 is the Weeping Angel room. All are lost on death or when leaving the level.
+Regular levels hide four unique power-ups in maze dead ends. 
 - Red heart: after dying, `R` restarts the current level instead of level 1 (the death screen says so).
 - Lightning bolt: sprint speed x1.5.
 - Spray can: press `Space` while close to and facing a wall to mark it with a red X (2 second cooldown).

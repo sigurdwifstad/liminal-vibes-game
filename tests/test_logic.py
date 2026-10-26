@@ -1320,14 +1320,36 @@ class TestCoreLogic(unittest.TestCase):
     def test_level_12_teleport_plays_monster_appearing_sound(self):
         try:
             from main import LiminalVibesGame
+            from ursina import time as ursina_time
         except ModuleNotFoundError:
             _install_fake_engine_modules()
             from main import LiminalVibesGame
+            from ursina import time as ursina_time
 
         game = LiminalVibesGame(test=True, start_level=12)
         with patch.object(game.audio, "play_monster_appearing", return_value=True) as mock_play:
             game._teleport_player()
+            self.assertEqual(game._level12_teleport_cooldown, 5.0)
+            game.ui.run.running = True
+            game._level12_out_of_sight = True
+            game._update_hud()
+            self.assertFalse(game.teleport_hint.enabled)
+            game.input("shift")
             mock_play.assert_called_once()
+
+            previous_dt = ursina_time.dt
+            try:
+                ursina_time.dt = 5.0
+                with patch.object(game, "_update_level12"):
+                    game.update()
+            finally:
+                ursina_time.dt = previous_dt
+            self.assertEqual(game._level12_teleport_cooldown, 0.0)
+
+            game._update_hud()
+            self.assertTrue(game.teleport_hint.enabled)
+            game.input("shift")
+            self.assertEqual(mock_play.call_count, 2)
 
     def test_level_11_touch_starts_cutscene_before_loading_level_12(self):
         try:
@@ -1481,6 +1503,39 @@ class TestPowerUpLogic(unittest.TestCase):
             self.assertTrue(level_has_powerups(level))
         for level in (1, 5, 7, 10, 11, 12):
             self.assertFalse(level_has_powerups(level))
+
+    def test_powerups_are_introduced_progressively(self):
+        from powerups import PowerUpManager, PowerUpType
+
+        class _Maze:
+            seed = 42
+            start_cell = (0, 0)
+            exit_cell = (9, 9)
+            walkable_cells = {(x, z) for x in range(10) for z in range(10)}
+
+            def dead_end_cells(self):
+                return [(x, 1) for x in range(1, 9)]
+
+            def world_from_cell(self, cell):
+                return cell
+
+        expected = {
+            2: (PowerUpType.HEART,),
+            3: (PowerUpType.HEART, PowerUpType.SPRAY),
+            4: (PowerUpType.HEART, PowerUpType.SPRAY, PowerUpType.LIGHTNING),
+            6: tuple(PowerUpType),
+            8: tuple(PowerUpType),
+            5: (),
+        }
+        manager = PowerUpManager()
+        with patch("powerups.PowerUpPickup", side_effect=lambda kind, *_args, **_kwargs: SimpleNamespace(kind=kind)), patch("powerups.destroy"):
+            for level, expected_types in expected.items():
+                with self.subTest(level=level):
+                    manager.spawn_for_level(_Maze(), level)
+                    self.assertEqual(
+                        {pickup.kind for pickup in manager.pickups},
+                        set(expected_types),
+                    )
 
     def test_ray_sphere(self):
         self.assertAlmostEqual(ray_hits_sphere((0, 0, 0), (0, 0, 1), (0, 0, 5), 1.0), 4.0)
