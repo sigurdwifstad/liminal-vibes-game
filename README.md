@@ -9,7 +9,6 @@ The game is inspired by the "Backrooms" lore and feature film.
 - You are a child trapped in a strange, empty office building.
 - Explore a procedurally generated maze-like environment and try to reach the exit. 
 - It seems you are not entirely alone in the building...
-- Level 9 adds randomly scattered furniture, level 10 is a Weeping Angel encounter in an open room, and the former special levels 9 and 10 are now levels 11 and 12.
 
 ## Controls
 - Move: `WASD`
