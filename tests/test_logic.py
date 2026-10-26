@@ -476,6 +476,47 @@ class TestCoreLogic(unittest.TestCase):
         self.assertTrue(manager.play_monster_scream(13.0))
 
     @patch("audio.pygame.mixer.init")
+    def test_weeping_angel_sound_loops_stops_and_plays_scream(self, _mock_init):
+        manager = AudioManager()
+        manager.available = True
+        manager.sfx_volume = 0.3
+        manager.weeping_angel_sound = object()
+        manager.angel_scream_sound = object()
+
+        class _FakeChannel:
+            def __init__(self):
+                self.busy = False
+                self.play_calls = []
+                self.stopped = False
+
+            def set_volume(self, *_args, **_kwargs):
+                return None
+
+            def get_busy(self):
+                return self.busy
+
+            def play(self, sound, **kwargs):
+                self.play_calls.append((sound, kwargs))
+                self.busy = True
+
+            def stop(self):
+                self.stopped = True
+                self.busy = False
+
+        channel = _FakeChannel()
+        with patch("audio.pygame.mixer.find_channel", return_value=channel), patch(
+            "audio.pygame.mixer.set_num_channels"
+        ):
+            self.assertTrue(manager.play_weeping_angel())
+            self.assertTrue(manager.play_weeping_angel())
+            self.assertEqual(len(channel.play_calls), 1)
+            self.assertEqual(channel.play_calls[0][1], {"loops": -1})
+            manager.stop_weeping_angel()
+            self.assertTrue(channel.stopped)
+            self.assertTrue(manager.play_angel_scream())
+            self.assertIs(channel.play_calls[-1][0], manager.angel_scream_sound)
+
+    @patch("audio.pygame.mixer.init")
     @patch("audio.random.choice", return_value=1)
     @patch("audio.random.randrange", side_effect=[0, 0])
     def test_audio_manager_monster_scream_randomly_varies_choice(self, _mock_randrange, _mock_choice, _mock_init):
@@ -697,7 +738,7 @@ class TestCoreLogic(unittest.TestCase):
         self.assertFalse(monster.static_crucified)
         self.assertEqual((monster.scale.x, monster.scale.y, monster.scale.z), (1.0, 1.0, 1.0))
 
-    def test_einkvan_sequence_unlocks_door_after_the_fourth_clip(self):
+    def test_einkvan_sequence_stops_at_random_clip_count(self):
         try:
             from audio import AudioManager
         except ModuleNotFoundError:
@@ -707,12 +748,14 @@ class TestCoreLogic(unittest.TestCase):
         class _FakeChannel:
             def __init__(self):
                 self.busy = True
+                self.played = []
 
             def set_volume(self, *_args, **_kwargs):
                 return None
 
-            def play(self, *_args, **_kwargs):
+            def play(self, sound):
                 self.busy = True
+                self.played.append(sound)
 
             def get_busy(self):
                 return self.busy
@@ -726,6 +769,7 @@ class TestCoreLogic(unittest.TestCase):
         manager.einkvan_sounds = [object(), object(), object(), object()]
 
         channel = _FakeChannel()
+        sounds = manager.einkvan_sounds
         fake_clock = {"now": 1000.0}
 
         def fake_monotonic():
@@ -734,38 +778,38 @@ class TestCoreLogic(unittest.TestCase):
         with patch("audio.pygame.mixer.find_channel", return_value=channel), patch("audio.pygame.mixer.set_num_channels"), patch(
             "audio.time.monotonic", side_effect=fake_monotonic
         ):
-            manager.start_einkvan_sequence()
-            self.assertFalse(manager.einkvan_sequence_finished)
+            for clip_count in range(1, 5):
+                with self.subTest(clip_count=clip_count):
+                    channel.played.clear()
+                    channel.busy = True
+                    fake_clock["now"] = 1000.0
+                    with patch("audio.random.randint", return_value=clip_count):
+                        manager.start_einkvan_sequence()
+                    self.assertFalse(manager.einkvan_sequence_finished)
 
-            # No clip plays during the silent lead-in.
-            self.assertFalse(manager.update_einkvan_sequence())
-            self.assertEqual(manager._einkvan_index, -1)
-            fake_clock["now"] += manager.einkvan_lead_in_seconds - 0.01
-            self.assertFalse(manager.update_einkvan_sequence())
-            self.assertEqual(manager._einkvan_index, -1)
+                    # No clip plays during the silent lead-in.
+                    self.assertFalse(manager.update_einkvan_sequence())
+                    self.assertEqual(manager._einkvan_index, -1)
+                    fake_clock["now"] += manager.einkvan_lead_in_seconds - 0.01
+                    self.assertFalse(manager.update_einkvan_sequence())
+                    self.assertEqual(manager._einkvan_index, -1)
 
-            # Once the lead-in elapses, the first clip starts.
-            fake_clock["now"] += 0.02
-            self.assertFalse(manager.update_einkvan_sequence())
-            self.assertEqual(manager._einkvan_index, 0)
+                    # Once the lead-in elapses, the first clip starts.
+                    fake_clock["now"] += 0.02
+                    self.assertFalse(manager.update_einkvan_sequence())
+                    self.assertEqual(channel.played, sounds[:1])
 
-            # While a clip is still playing, updates are no-ops.
-            self.assertFalse(manager.update_einkvan_sequence())
-            self.assertFalse(manager.update_einkvan_sequence())
+                    # Each completed clip advances only while below the rolled count.
+                    for played_count in range(1, clip_count):
+                        channel.busy = False
+                        self.assertFalse(manager.update_einkvan_sequence())
+                        self.assertEqual(channel.played, sounds[: played_count + 1])
 
-            # Each time the "current" clip finishes, the sequence advances.
-            channel.busy = False
-            self.assertFalse(manager.update_einkvan_sequence())  # clip 1 -> clip 2
-            channel.busy = False
-            self.assertFalse(manager.update_einkvan_sequence())  # clip 2 -> clip 3
-            channel.busy = False
-            self.assertFalse(manager.update_einkvan_sequence())  # clip 3 -> clip 4
-            channel.busy = False
-            self.assertTrue(manager.update_einkvan_sequence())  # clip 4 finished
-            self.assertTrue(manager.einkvan_sequence_finished)
-
-            # Further polling stays finished and doesn't replay anything.
-            self.assertFalse(manager.update_einkvan_sequence())
+                    channel.busy = False
+                    self.assertTrue(manager.update_einkvan_sequence())
+                    self.assertEqual(channel.played, sounds[:clip_count])
+                    self.assertTrue(manager.einkvan_sequence_finished)
+                    self.assertFalse(manager.update_einkvan_sequence())
 
     def test_dark_drone_loop_starts_and_stops(self):
         try:
@@ -923,28 +967,48 @@ class TestCoreLogic(unittest.TestCase):
         self.assertGreaterEqual(monster_arm_reach_factor(1.4), threshold)
         self.assertLess(monster_arm_reach_factor(1.8), threshold)
 
-    def test_level_10_uses_standard_maze_generation(self):
-        """Level 10 ("The final level") is not a special-cased hallway/open
-        field like levels 5/7/9 -- it uses the same procedural maze as the
-        regular chase levels, giving the fleeing child room to run and the
-        player-monster room to hide before teleporting."""
+    def test_level_10_is_a_single_open_furnished_room(self):
         try:
             from maze import MazeManager
+            from ursina import Vec3
         except ModuleNotFoundError:
             _install_fake_engine_modules()
             from maze import MazeManager
+            from ursina import Vec3
 
         maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
-
-        # Standard grid size (17), not one of the special-cased sizes (35/101/45).
-        self.assertEqual(maze.grid_size, 17)
+        self.assertEqual(maze.grid_size, 61)
+        self.assertGreaterEqual(len(maze.furniture_obstacles), 40)
         self.assertIsNone(maze.monster_start_cell)
+        self.assertIsNotNone(maze.angel_start_cell)
         self.assertTrue(maze.is_walkable_cell(maze.start_cell))
         self.assertTrue(maze.is_walkable_cell(maze.exit_cell))
-        # A real interior maze is carved (unlike level 7's open field): not
-        # every walkable cell has 4 walkable neighbors.
+        self.assertEqual(len(maze.walkable_cells), (maze.grid_size - 2) ** 2)
+        self.assertGreater(len(maze.furniture_obstacles), 0)
         neighbor_counts = [sum(1 for _ in maze.walkable_neighbors(cell)) for cell in maze.walkable_cells]
         self.assertTrue(any(count < 4 for count in neighbor_counts))
+        furniture_x, furniture_z, _, _ = maze.furniture_obstacles[0]
+        self.assertFalse(maze.can_occupy_position(Vec3(furniture_x, 0, furniture_z), radius=0.35))
+
+    def test_level_9_is_a_regular_powerup_maze_with_furniture(self):
+        try:
+            from maze import MazeManager
+            from ursina import Vec3
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from maze import MazeManager
+            from ursina import Vec3
+
+        maze = MazeManager(seed=12345, level=9, cell_size=4.0, test=True)
+        self.assertEqual(maze.grid_size, 9)
+        self.assertIsNone(maze.monster_start_cell)
+        self.assertTrue(level_has_powerups(9))
+        self.assertGreater(len(maze.furniture_obstacles), 0)
+        for furniture_x, furniture_z, _, _ in maze.furniture_obstacles:
+            cell = maze.cell_from_world(Vec3(furniture_x, 0, furniture_z))
+            cell_x, cell_z = maze.world_from_cell(cell)
+            self.assertFalse(maze.can_occupy_position(Vec3(furniture_x, 0, furniture_z), radius=0.45))
+            self.assertTrue(maze.can_occupy_position(Vec3(cell_x, 0, cell_z), radius=0.45))
 
     def test_child_wanders_via_pathfinding_when_player_not_in_sight(self):
         """The child never stands fully still: it continuously explores the
@@ -961,7 +1025,7 @@ class TestCoreLogic(unittest.TestCase):
             from child import ChildCharacter
             from ursina import Vec3
 
-        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        maze = MazeManager(seed=12345, level=12, cell_size=4.0, test=False)
         child = ChildCharacter(position=Vec3(0, -1000, 0))
         cx, cz = maze.world_from_cell(maze.exit_cell)
         child.place_at(Vec3(cx, 0.0, cz))
@@ -986,7 +1050,7 @@ class TestCoreLogic(unittest.TestCase):
             from child import ChildCharacter
             from ursina import Vec3
 
-        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        maze = MazeManager(seed=12345, level=12, cell_size=4.0, test=False)
         child = ChildCharacter(position=Vec3(0, -1000, 0))
         cx, cz = maze.world_from_cell(maze.exit_cell)
         child.place_at(Vec3(cx, 0.0, cz))
@@ -1021,7 +1085,7 @@ class TestCoreLogic(unittest.TestCase):
             from child import ChildCharacter
             from ursina import Vec3
 
-        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        maze = MazeManager(seed=12345, level=12, cell_size=4.0, test=False)
         child = ChildCharacter(position=Vec3(0, -1000, 0))
         cx, cz = maze.world_from_cell(maze.exit_cell)
         child.place_at(Vec3(cx, 0.0, cz))
@@ -1058,7 +1122,7 @@ class TestCoreLogic(unittest.TestCase):
             from child import ChildCharacter
             from ursina import Vec3
 
-        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        maze = MazeManager(seed=12345, level=12, cell_size=4.0, test=False)
         child = ChildCharacter(position=Vec3(0, -1000, 0))
         cx, cz = maze.world_from_cell(maze.exit_cell)
         child.place_at(Vec3(cx, 0.0, cz))
@@ -1094,7 +1158,7 @@ class TestCoreLogic(unittest.TestCase):
             from child import ChildCharacter
             from ursina import Vec3
 
-        maze = MazeManager(seed=12345, level=10, cell_size=4.0, test=False)
+        maze = MazeManager(seed=12345, level=12, cell_size=4.0, test=False)
         child = ChildCharacter(position=Vec3(0, -1000, 0))
         cx, cz = maze.world_from_cell(maze.exit_cell)
         child.place_at(Vec3(cx, 0.0, cz))
@@ -1187,7 +1251,7 @@ class TestCoreLogic(unittest.TestCase):
         manager.set_footstep_monster_mode(True)
         self.assertIs(manager._current_footstep_sound(), manager.monster_footstep_sound)
 
-    def test_level_10_disables_sprint_spider_and_the_regular_monster(self):
+    def test_level_10_has_only_the_weeping_angel(self):
         try:
             from main import LiminalVibesGame
         except ModuleNotFoundError:
@@ -1195,27 +1259,77 @@ class TestCoreLogic(unittest.TestCase):
             from main import LiminalVibesGame
 
         game = LiminalVibesGame(test=True, start_level=10)
-        self.assertTrue(game.player.no_sprint)
-        self.assertTrue(game.player.use_monster_footstep)
+        self.assertFalse(game.player.no_sprint)
+        self.assertFalse(game.player.use_monster_footstep)
         self.assertEqual(game.spider.spawn_delay_seconds, float("inf"))
         self.assertEqual(game.monster.spawn_delay_seconds, float("inf"))
-        self.assertTrue(game.level10_vision_tint.enabled)
-        self.assertTrue(game.level10_vein_overlay.enabled)
-        self.assertTrue(game.child.spawned)
+        self.assertFalse(game.level12_vision_tint.enabled)
+        self.assertFalse(game.level12_vein_overlay.enabled)
+        self.assertTrue(game.angel.spawned)
+        self.assertFalse(game.child.spawned)
+        self.assertFalse(level_has_powerups(10))
 
-    def test_level_10_teleport_plays_monster_appearing_sound(self):
+    def test_weeping_angel_freezes_in_view_and_moves_when_hidden(self):
+        try:
+            from main import LiminalVibesGame
+            from ursina import time as ursina_time
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from main import LiminalVibesGame
+            from ursina import time as ursina_time
+
+        game = LiminalVibesGame(test=True, start_level=10)
+        angel = game.angel
+        start = (angel.position.x, angel.position.z)
+        ursina_time.dt = 0.2
+
+        with patch("weeping_angel.is_position_visible", return_value=True), \
+                patch.object(game.audio, "play_weeping_angel", return_value=True) as stop_sound:
+            self.assertFalse(angel.update_angel(game.maze, game.player.world_position, game.player.forward))
+            stop_sound.assert_called_once()
+        self.assertEqual((angel.position.x, angel.position.z), start)
+
+        with patch("weeping_angel.is_position_visible", return_value=False), \
+                patch.object(game.audio, "play_weeping_angel", return_value=True) as play_sound:
+            angel.update_angel(game.maze, game.player.world_position, game.player.forward)
+            play_sound.assert_called_once()
+        self.assertNotEqual((angel.position.x, angel.position.z), start)
+
+    def test_weeping_angel_catch_uses_standard_death_screen_and_scream(self):
+        try:
+            from main import LiminalVibesGame
+            from ursina import time as ursina_time
+        except ModuleNotFoundError:
+            _install_fake_engine_modules()
+            from main import LiminalVibesGame
+            from ursina import time as ursina_time
+
+        game = LiminalVibesGame(test=True, start_level=10)
+        game.angel.position = game.player.position
+        ursina_time.dt = 0.1
+        with patch.object(game.audio, "play_angel_scream", return_value=True) as scream, \
+                patch.object(game, "_show_death_closeup") as closeup:
+            game.update()
+            scream.assert_called_once()
+            closeup.assert_called_once_with(game.angel)
+        self.assertFalse(game.ui.run.running)
+        self.assertTrue(game.ui.game_over_root.enabled)
+        self.assertFalse(game.ui.endgame_active)
+        self.assertFalse(game.player.enabled)
+
+    def test_level_12_teleport_plays_monster_appearing_sound(self):
         try:
             from main import LiminalVibesGame
         except ModuleNotFoundError:
             _install_fake_engine_modules()
             from main import LiminalVibesGame
 
-        game = LiminalVibesGame(test=True, start_level=10)
+        game = LiminalVibesGame(test=True, start_level=12)
         with patch.object(game.audio, "play_monster_appearing", return_value=True) as mock_play:
             game._teleport_player()
             mock_play.assert_called_once()
 
-    def test_level_9_touch_starts_cutscene_before_loading_level_10(self):
+    def test_level_11_touch_starts_cutscene_before_loading_level_12(self):
         try:
             from main import LiminalVibesGame
             from ursina import time as ursina_time
@@ -1224,12 +1338,12 @@ class TestCoreLogic(unittest.TestCase):
             from main import LiminalVibesGame
             from ursina import time as ursina_time
 
-        game = LiminalVibesGame(test=True, start_level=9)
+        game = LiminalVibesGame(test=True, start_level=11)
         game.player.position = game.monster.position
         ursina_time.dt = 0.1
 
         game.update()
-        self.assertEqual(game.level, 9)
+        self.assertEqual(game.level, 11)
         self.assertTrue(game._level9_transition_active)
         self.assertTrue(game.ui.level9_transition_active)
         self.assertFalse(game.player.enabled)
@@ -1240,17 +1354,17 @@ class TestCoreLogic(unittest.TestCase):
             + 0.1
         )
         game.update()
-        self.assertEqual(game.level, 10)
+        self.assertEqual(game.level, 12)
         self.assertTrue(game.ui.level9_transition_level_loaded)
         self.assertFalse(game.player.enabled)
 
         ursina_time.dt = game.ui.level9_transition_reveal_duration
         game.update()
-        self.assertEqual(game.level, 10)
+        self.assertEqual(game.level, 12)
         self.assertFalse(game._level9_transition_active)
         self.assertTrue(game.player.enabled)
 
-    def test_level_10_catch_freezes_and_starts_the_endgame_sequence(self):
+    def test_level_12_catch_freezes_and_starts_the_endgame_sequence(self):
         try:
             from main import LiminalVibesGame
             from ursina import time as ursina_time
@@ -1259,7 +1373,7 @@ class TestCoreLogic(unittest.TestCase):
             from main import LiminalVibesGame
             from ursina import time as ursina_time
 
-        game = LiminalVibesGame(test=True, start_level=10)
+        game = LiminalVibesGame(test=True, start_level=12)
         ursina_time.dt = 0.1
 
         # Move the child right on top of the player to force a catch.
@@ -1270,7 +1384,7 @@ class TestCoreLogic(unittest.TestCase):
             mock_play_endgame.assert_called_once()
             mock_play_scream.assert_called_once()
 
-        self.assertTrue(game._level10_endgame_triggered)
+        self.assertTrue(game._level12_endgame_triggered)
         self.assertFalse(game.ui.run.running)
         self.assertTrue(game.ui.endgame_active)
         self.assertFalse(game.player.enabled)
@@ -1299,8 +1413,8 @@ class TestCoreLogic(unittest.TestCase):
             self.assertNotEqual(game.stamina_bg.position.x, initial_x)
             self.assertEqual(game.stamina_bg.position.x, layout.left_x)
             self.assertEqual(game.stamina_fill.position.x, layout.left_x)
-            self.assertEqual(game.level10_vision_tint.scale.x, layout.fullscreen_scale.x)
-            self.assertEqual(game.level10_vein_overlay.scale.x, layout.fullscreen_scale.x)
+            self.assertEqual(game.level12_vision_tint.scale.x, layout.fullscreen_scale.x)
+            self.assertEqual(game.level12_vein_overlay.scale.x, layout.fullscreen_scale.x)
         finally:
             ursina_window.aspect_ratio = original_aspect_ratio
 
@@ -1363,9 +1477,9 @@ class TestPowerUpLogic(unittest.TestCase):
         self.assertEqual(find_dead_ends(walkable, exclude=((0, 0),)), [(1, 1), (2, 0)])
 
     def test_levels_with_powerups(self):
-        for level in (2, 3, 4, 6, 8):
+        for level in (2, 3, 4, 6, 8, 9):
             self.assertTrue(level_has_powerups(level))
-        for level in (1, 5, 7, 9, 10):
+        for level in (1, 5, 7, 10, 11, 12):
             self.assertFalse(level_has_powerups(level))
 
     def test_ray_sphere(self):
@@ -1373,6 +1487,59 @@ class TestPowerUpLogic(unittest.TestCase):
         self.assertIsNone(ray_hits_sphere((0, 0, 0), (0, 0, 1), (3, 0, 5), 1.0))
         self.assertIsNone(ray_hits_sphere((0, 0, 0), (0, 0, 1), (0, 0, -5), 1.0))
         self.assertIsNone(ray_hits_sphere((0, 0, 0), (0, 0, 1), (0, 0, 5), 1.0, max_distance=2.0))
+
+
+class TestPowerUpHints(unittest.TestCase):
+    @staticmethod
+    def _make_game():
+        from main import LiminalVibesGame
+
+        game = LiminalVibesGame.__new__(LiminalVibesGame)
+        game._collected_powerup_hints = set()
+        game._pending_powerup_hints = []
+        game._powerup_hint_timer = 0.0
+        game.powerup_hint = SimpleNamespace(text="", enabled=False)
+        return game
+
+    def test_hints_show_once_per_run_and_reset_for_new_run(self):
+        from powerups import PowerUpType
+
+        game = self._make_game()
+        game._show_first_powerup_hint(PowerUpType.SPRAY)
+        self.assertEqual(game.powerup_hint.text, "Press Space to use spray can")
+        self.assertTrue(game.powerup_hint.enabled)
+        timer = game._powerup_hint_timer
+
+        game.level = 3
+        game._show_first_powerup_hint(PowerUpType.SPRAY)
+        self.assertEqual(game._powerup_hint_timer, timer)
+
+        game.start_level = 1
+        game.ui = SimpleNamespace(start_new_run=lambda **_kwargs: None)
+        game.audio = SimpleNamespace(
+            reset_sfx_cooldowns=lambda: None,
+            play_ambient_loop=lambda: None,
+        )
+        game._load_level = lambda: None
+        game.start_new_run(level=1)
+        self.assertFalse(game.powerup_hint.enabled)
+        game._show_first_powerup_hint(PowerUpType.SPRAY)
+        self.assertTrue(game.powerup_hint.enabled)
+
+    def test_hint_expires_and_queued_hint_is_displayed(self):
+        from powerups import PowerUpType
+
+        game = self._make_game()
+        game._show_first_powerup_hint(PowerUpType.SPRAY)
+        game._show_first_powerup_hint(PowerUpType.GUN)
+        self.assertEqual(game.powerup_hint.text, "Press Space to use spray can")
+
+        game._update_powerup_hint(game.POWERUP_HINT_DURATION)
+        self.assertEqual(game.powerup_hint.text, "Left click to fire gun")
+        self.assertTrue(game.powerup_hint.enabled)
+
+        game._update_powerup_hint(game.POWERUP_HINT_DURATION)
+        self.assertFalse(game.powerup_hint.enabled)
 
 
 if __name__ == "__main__":

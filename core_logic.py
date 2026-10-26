@@ -66,7 +66,7 @@ def monster_arm_reach_factor(distance_to_player: float, reach_start_distance: fl
 
 
 
-POWERUP_EXCLUDED_LEVELS = (1, 5, 7, 9, 10)
+POWERUP_EXCLUDED_LEVELS = (1, 5, 7, 10, 11, 12)
 
 
 def level_has_powerups(level: int) -> bool:

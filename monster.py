@@ -19,7 +19,7 @@ _VIS_CONE_COS: float = math.cos(math.radians(52.0))
 def is_position_visible(maze: MazeManager, viewer_position: Vec3, viewer_forward: Vec3 | None, target_position: Vec3) -> bool:
     """Line-of-sight + ~52-degree viewing-cone check from `viewer_position`
     (facing `viewer_forward`) to `target_position`. Shared by the monster's
-    "is the monster visible to the player" check and level 10's "is the
+    "is the monster visible to the player" check and level 12's "is the
     player-monster visible to the fleeing child" check (used in reverse to
     determine when the player-monster may teleport)."""
     viewer_cell = maze.cell_from_world(viewer_position)
@@ -49,7 +49,7 @@ def astar_path(
     avoid_penalty: float = 14.0,
 ) -> List[Cell]:
     """A* pathfinding across the maze's walkable-cell graph. Shared by the
-    monster's chase AI and level 10's fleeing-child movement.
+    monster's chase AI and level 12's fleeing-child movement.
 
     When `avoid_cell` is given, cells within `avoid_radius` (Manhattan
     distance) of it are penalized -- steeper the closer they are -- so the
@@ -359,6 +359,8 @@ class MonsterController(Entity):
             if dist < min_dist or dist > max_dist:
                 continue
             wx, wz = maze.world_from_cell(cell)
+            if not maze.can_occupy_position(Vec3(wx, 0.0, wz), radius=0.35):
+                continue
             if not self._is_visible_to_player(maze, player_position, player_forward, Vec3(wx, 0, wz)):
                 hidden.append(cell)
 
@@ -368,6 +370,8 @@ class MonsterController(Entity):
         # Keep spawn/teleport out of current line of sight even when distance filters fail.
         for cell in maze.walkable_cells:
             wx, wz = maze.world_from_cell(cell)
+            if not maze.can_occupy_position(Vec3(wx, 0.0, wz), radius=0.35):
+                continue
             if not self._is_visible_to_player(maze, player_position, player_forward, Vec3(wx, 0, wz)):
                 hidden.append(cell)
         if hidden:
@@ -417,7 +421,7 @@ class MonsterController(Entity):
         return best_cell
 
     def update_friendly(self, player_position: Vec3, run_elapsed: float) -> None:
-        """Level 9's friendly monster: stands still and never chases or catches
+        """Level 11's friendly monster: stands still and never chases or catches
         the player, but still reaches its arms out toward them and lets out a
         scream once they get close, purely as a startle/flavor beat before the
         hug."""
@@ -528,7 +532,16 @@ class MonsterController(Entity):
             self.current_speed = speed
             step = min(speed * time.dt, to_target.length())
             direction = to_target.normalized()
-            self.position += direction * step
+            candidate = self.position + direction * step
+            if maze.can_occupy_position(candidate, radius=0.35):
+                self.position = candidate
+            else:
+                slide_x = self.position + Vec3(direction.x * step, 0, 0)
+                slide_z = self.position + Vec3(0, 0, direction.z * step)
+                if maze.can_occupy_position(slide_x, radius=0.35):
+                    self.position = slide_x
+                elif maze.can_occupy_position(slide_z, radius=0.35):
+                    self.position = slide_z
             yaw = math.degrees(math.atan2(direction.x, direction.z))
             self.rotation_y = yaw
             self.walk_anim_phase += time.dt * (2.8 + speed * 1.25)

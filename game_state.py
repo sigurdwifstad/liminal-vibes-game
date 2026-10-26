@@ -122,7 +122,7 @@ class GameStateUI:
         )
         # After being caught on a regular level, the screen holds for a
         # few seconds, then fades to black; the restart/quit hint only
-        # appears once the fade has fully finished (mirrors the level 10
+        # appears once the fade has fully finished (mirrors the level 12
         # "END GAME" fade sequence in `_update_endgame`).
         self.game_over_fade_timer = 0.0
         self.game_over_fade_delay = 3.0
@@ -153,7 +153,7 @@ class GameStateUI:
             color=color.rgb(210, 210, 205),
         )
 
-        # Level 10's finale: player-monster catches the fleeing child, the
+        # Level 12's finale: player-monster catches the fleeing child, the
         # screen freezes and fades to black behind an "END GAME" title.
         self.endgame_active = False
         self.endgame_fade_timer = 0.0
@@ -306,7 +306,7 @@ class GameStateUI:
         self.game_over_time.text = f"Survived: {format_mmss(self.run.survival_seconds)}"
 
     def on_endgame_caught(self) -> None:
-        """Level 10's finale: the player-monster has caught the child. Freeze
+        """Level 12's finale: the player-monster has caught the child. Freeze
         the run and start the freeze/fade-to-black/"END GAME" sequence (see
         `_update_endgame`); the caller is responsible for triggering the
         `endgame.mp3` audio cue once (via `AudioManager.play_endgame`). The

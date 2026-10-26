@@ -19,6 +19,8 @@ def clamp_volume(volume: float) -> float:
 
 
 class AudioManager:
+    _weeping_angel_paused = False
+
     def __init__(self, ambient_volume: float = 1.0, sfx_volume: float = 0.3):
         self.ambient_volume = clamp_volume(ambient_volume)
         self.sfx_volume = clamp_volume(sfx_volume)
@@ -43,6 +45,8 @@ class AudioManager:
             self.exhausted_sound = None
             self.monster_hug_sound = None
             self.endgame_sound = None
+            self.weeping_angel_sound = None
+            self.angel_scream_sound = None
             self.footstep_channel = None
             self.monster_appearing_channel = None
             self.monster_scream_channel = None
@@ -54,6 +58,8 @@ class AudioManager:
             self.exhausted_channel = None
             self.monster_hug_channel = None
             self.endgame_channel = None
+            self.weeping_angel_channel = None
+            self.angel_scream_channel = None
             self.footstep_sprint_sound = None
             self.footstep_sprinting = False
             self.use_monster_footstep = False
@@ -63,6 +69,7 @@ class AudioManager:
             self.spider_walking_playing = False
             self.dark_drone_playing = False
             self._einkvan_index = -1
+            self._einkvan_clip_count = 0
             self.einkvan_sequence_finished = False
             self._einkvan_start_at: Optional[float] = None
             self.einkvan_lead_in_seconds = 10.0
@@ -90,7 +97,7 @@ class AudioManager:
         self.footstep_boosted = False
         self.footstep_sprinting = False
         self.footstep_playing = False
-        # Level 10: the player-monster's own heavier footfall sound, played
+        # Level 12: the player-monster's own heavier footfall sound, played
         # instead of the regular human footstep sound while moving.
         self.monster_footstep_sound = None
         self.use_monster_footstep = False
@@ -119,7 +126,12 @@ class AudioManager:
         self.monster_hug_sound = None
         self.endgame_channel = None
         self.endgame_sound = None
+        self.weeping_angel_channel = None
+        self.weeping_angel_sound = None
+        self.angel_scream_channel = None
+        self.angel_scream_sound = None
         self._einkvan_index = -1
+        self._einkvan_clip_count = 0
         self.einkvan_sequence_finished = False
         self._einkvan_start_at: Optional[float] = None
         self.einkvan_lead_in_seconds = 10.0
@@ -284,6 +296,24 @@ class AudioManager:
             else:
                 print(f"Warning: Endgame sound not found at {endgame_path}")
                 self.endgame_sound = None
+
+            weeping_angel_path = self.resources_path / "weeping_angel.mp3"
+            if weeping_angel_path.exists():
+                self.weeping_angel_sound = pygame.mixer.Sound(str(weeping_angel_path))
+                self.weeping_angel_sound.set_volume(self.sfx_volume)
+                print(f"Loaded Weeping Angel sound from {weeping_angel_path}")
+            else:
+                print(f"Warning: Weeping Angel sound not found at {weeping_angel_path}")
+                self.weeping_angel_sound = None
+
+            angel_scream_path = self.resources_path / "angel_scream.mp3"
+            if angel_scream_path.exists():
+                self.angel_scream_sound = pygame.mixer.Sound(str(angel_scream_path))
+                self.angel_scream_sound.set_volume(self.sfx_volume)
+                print(f"Loaded angel scream sound from {angel_scream_path}")
+            else:
+                print(f"Warning: Angel scream sound not found at {angel_scream_path}")
+                self.angel_scream_sound = None
         except Exception as e:
             print(f"Warning: Could not load audio files: {e}")
             self.ambient_sound = None
@@ -300,6 +330,8 @@ class AudioManager:
             self.exhausted_sound = None
             self.monster_hug_sound = None
             self.endgame_sound = None
+            self.weeping_angel_sound = None
+            self.angel_scream_sound = None
 
     def _current_footstep_sound(self):
         if self.use_monster_footstep and self.monster_footstep_sound is not None:
@@ -399,6 +431,10 @@ class AudioManager:
             self.spray_can_sound.set_volume(self.sfx_volume)
         if self.intense_sequence_sound is not None:
             self.intense_sequence_sound.set_volume(self.sfx_volume)
+        if self.weeping_angel_sound is not None:
+            self.weeping_angel_sound.set_volume(self.sfx_volume)
+        if self.angel_scream_sound is not None:
+            self.angel_scream_sound.set_volume(self.sfx_volume)
 
     def stop_ambient(self) -> None:
         """Stop the ambient sound"""
@@ -457,7 +493,7 @@ class AudioManager:
             self.play_footstep_loop()
 
     def set_footstep_monster_mode(self, use_monster_footstep: bool) -> None:
-        """Level 10: the player-monster's footfalls use `monster_footsteps.mp3`
+        """Level 12: the player-monster's footfalls use `monster_footsteps.mp3`
         instead of the regular human footstep sound."""
         use_monster_footstep = bool(use_monster_footstep)
         if use_monster_footstep == self.use_monster_footstep:
@@ -544,10 +580,9 @@ class AudioManager:
         self.dark_drone_channel = None
 
     def start_einkvan_sequence(self) -> None:
-        """Arm the level-7 einkvan_1..4 sequence. Playback of the first clip is
-        delayed by `einkvan_lead_in_seconds` of silence; call
-        `update_einkvan_sequence()` every frame to advance it."""
+        """Arm a random-length level-7 Einkvan sequence after the silent lead-in."""
         self._einkvan_index = -1
+        self._einkvan_clip_count = random.randint(1, 4)
         self.einkvan_sequence_finished = False
         if self.einkvan_channel is not None:
             try:
@@ -563,7 +598,7 @@ class AudioManager:
             return
 
         self._einkvan_index += 1
-        if self._einkvan_index >= len(self.einkvan_sounds):
+        if self._einkvan_index >= min(self._einkvan_clip_count, len(self.einkvan_sounds)):
             self.einkvan_sequence_finished = True
             self.einkvan_channel = None
             return
@@ -589,8 +624,7 @@ class AudioManager:
     def update_einkvan_sequence(self) -> bool:
         """Poll the einkvan sequence once per frame. Waits out the initial
         silent lead-in, then advances to the next clip when the current one
-        finishes, returning True exactly once: the frame the final clip
-        finishes playing."""
+        finishes, returning True when the last selected clip finishes playing."""
         if self.einkvan_sequence_finished:
             return False
 
@@ -796,7 +830,7 @@ class AudioManager:
             return False
 
     def play_monster_hug(self) -> bool:
-        """Play the level-9 friendly-monster stinger once, as the player closes
+        """Play the level-11 friendly-monster stinger once, as the player closes
         the halfway distance to the monster in the hallway."""
         if not self.available or self.monster_hug_sound is None:
             return False
@@ -820,7 +854,7 @@ class AudioManager:
             return False
 
     def play_endgame(self) -> bool:
-        """Play the level-10 finale stinger once the player-monster catches
+        """Play the level-12 finale stinger once the player-monster catches
         the child, as the screen fades to black."""
         if not self.available or self.endgame_sound is None:
             return False
@@ -843,6 +877,74 @@ class AudioManager:
             print(f"Warning: Failed to play endgame sound: {e}")
             return False
 
+    def play_weeping_angel(self) -> bool:
+        if not self.available or self.weeping_angel_sound is None:
+            return False
+        if self.weeping_angel_channel is not None and self.weeping_angel_channel.get_busy():
+            if self._weeping_angel_paused:
+                try:
+                    self.weeping_angel_channel.unpause()
+                except Exception as e:
+                    print(f"Warning: Failed to resume Weeping Angel sound: {e}")
+                self._weeping_angel_paused = False
+            return True
+
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+            if channel is None:
+                print("Warning: Could not find available audio channel for Weeping Angel sound")
+                return False
+            channel.set_volume(self.sfx_volume)
+            channel.play(self.weeping_angel_sound, loops=-1)
+            self.weeping_angel_channel = channel
+            self._weeping_angel_paused = False
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play Weeping Angel sound: {e}")
+            return False
+
+    def pause_weeping_angel(self) -> None:
+        """Pause the loop so it resumes from the same position next time."""
+        if self.weeping_angel_channel is None or self._weeping_angel_paused:
+            return
+        try:
+            self.weeping_angel_channel.pause()
+            self._weeping_angel_paused = True
+        except Exception as e:
+            print(f"Warning: Failed to pause Weeping Angel sound: {e}")
+
+    def stop_weeping_angel(self) -> None:
+        self._weeping_angel_paused = False
+        if self.weeping_angel_channel is None:
+            return
+        try:
+            self.weeping_angel_channel.stop()
+        except Exception as e:
+            print(f"Warning: Failed to stop Weeping Angel sound: {e}")
+        self.weeping_angel_channel = None
+
+    def play_angel_scream(self) -> bool:
+        if not self.available or self.angel_scream_sound is None:
+            return False
+        try:
+            channel = pygame.mixer.find_channel()
+            if channel is None:
+                pygame.mixer.set_num_channels(pygame.mixer.get_num_channels() + 1)
+                channel = pygame.mixer.find_channel()
+            if channel is None:
+                print("Warning: Could not find available audio channel for angel scream")
+                return False
+            channel.set_volume(self.sfx_volume)
+            channel.play(self.angel_scream_sound)
+            self.angel_scream_channel = channel
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to play angel scream: {e}")
+            return False
+
     def cleanup(self) -> None:
         """Clean up audio resources"""
         if self.available:
@@ -850,6 +952,7 @@ class AudioManager:
             self.stop_footstep_loop()
             self.stop_spider_walking_loop()
             self.stop_dark_drone_loop()
+            self.stop_weeping_angel()
             try:
                 pygame.mixer.quit()
             except Exception:
@@ -874,5 +977,3 @@ def get_audio_manager(ambient_volume: Optional[float] = None, sfx_volume: Option
         if sfx_volume is not None:
             _AUDIO_MANAGER.set_sfx_volume(sfx_volume)
     return _AUDIO_MANAGER
-
-

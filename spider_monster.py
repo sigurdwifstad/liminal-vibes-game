@@ -224,6 +224,8 @@ class SpiderController(Entity):
                 continue
             wx, wz = maze.world_from_cell(cell)
             target_position = Vec3(wx, 0, wz)
+            if not maze.can_occupy_position(target_position, radius=0.4):
+                continue
             if self._is_in_forward_hemisphere(player_position, player_forward, target_position) and not self._is_visible_to_player(maze, player_position, player_forward, target_position):
                 hidden.append(cell)
 
@@ -234,6 +236,8 @@ class SpiderController(Entity):
         for cell in maze.walkable_cells:
             wx, wz = maze.world_from_cell(cell)
             target_position = Vec3(wx, 0, wz)
+            if not maze.can_occupy_position(target_position, radius=0.4):
+                continue
             if not self._is_visible_to_player(maze, player_position, player_forward, target_position):
                 hidden.append(cell)
         if hidden:
@@ -391,8 +395,9 @@ class SpiderController(Entity):
                 teleport_cell = self._pick_hidden_cell(maze, player_position, player_forward, min_dist=7, max_dist=26)
                 if teleport_cell is not None:
                     tx, tz = maze.world_from_cell(teleport_cell)
-                    self.position = Vec3(tx, 0.0, tz)
-                    self.path_cells.clear()
+                    if maze.can_occupy_position(Vec3(tx, 0.0, tz), radius=0.4):
+                        self.position = Vec3(tx, 0.0, tz)
+                        self.path_cells.clear()
             if self.teleport_timer <= 0.0:
                 self.teleport_timer = self.teleport_cooldown + self._rng.uniform(-0.8, 1.0)
         else:
@@ -421,7 +426,16 @@ class SpiderController(Entity):
             self.current_speed = 6.0
             step = min(self.current_speed * time.dt, to_target.length())
             direction = to_target.normalized()
-            self.position += direction * step
+            candidate = self.position + direction * step
+            if maze.can_occupy_position(candidate, radius=0.4):
+                self.position = candidate
+            else:
+                slide_x = self.position + Vec3(direction.x * step, 0, 0)
+                slide_z = self.position + Vec3(0, 0, direction.z * step)
+                if maze.can_occupy_position(slide_x, radius=0.4):
+                    self.position = slide_x
+                elif maze.can_occupy_position(slide_z, radius=0.4):
+                    self.position = slide_z
             yaw = math.degrees(math.atan2(direction.x, direction.z))
             self.rotation_y = yaw
             self.walk_anim_phase += time.dt * (2.8 + self.current_speed * 1.25)
@@ -431,7 +445,6 @@ class SpiderController(Entity):
             self._set_leg_pose(0.0)
 
         return False
-
 
 
 

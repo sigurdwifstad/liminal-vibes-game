@@ -9,6 +9,7 @@ The game is inspired by the "Backrooms" lore and feature film.
 - You are a child trapped in a strange, empty office building.
 - Explore a procedurally generated maze-like environment and try to reach the exit. 
 - It seems you are not entirely alone in the building...
+- Level 9 adds randomly scattered furniture, level 10 is a Weeping Angel encounter in an open room, and the former special levels 9 and 10 are now levels 11 and 12.
 
 ## Controls
 - Move: `WASD`
@@ -19,7 +20,7 @@ The game is inspired by the "Backrooms" lore and feature film.
 - Shoot (with the gun power-up): Left click
 
 ## Power-ups
-Regular levels (not 1, 5, 7, 9, 10) hide four unique power-ups in maze dead ends. All are lost on death or when leaving the level.
+Regular levels (not 1, 5, 7, 10, 11, 12) hide four unique power-ups in maze dead ends. Level 9 is a furnished maze; level 10 is the Weeping Angel room. All are lost on death or when leaving the level.
 - Red heart: after dying, `R` restarts the current level instead of level 1 (the death screen says so).
 - Lightning bolt: sprint speed x1.5.
 - Spray can: press `Space` while close to and facing a wall to mark it with a red X (2 second cooldown).

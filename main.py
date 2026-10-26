@@ -15,6 +15,7 @@ from game_state import GameStateUI, get_ui_screen_layout
 from maze import MazeManager
 from monster import MonsterController, is_position_visible
 from spider_monster import SpiderController
+from weeping_angel import WeepingAngel
 from player import PlayerController
 from powerups import PowerUpHUD, PowerUpManager, PowerUpType
 
@@ -22,8 +23,8 @@ from powerups import PowerUpHUD, PowerUpManager, PowerUpType
 _ACTIVE_GAME: LiminalVibesGame | None = None
 
 
-def _build_level10_vein_overlay_texture(size: int = 256) -> Texture:
-    """Procedurally generate a screen-space overlay texture for level 10:
+def _build_level12_vein_overlay_texture(size: int = 256) -> Texture:
+    """Procedurally generate a screen-space overlay texture for level 12:
     transparent near the center, thickening into dark-red vein-like
     branches toward the screen edges. Used (together with a flat red tint)
     to convey that the player has become the monster, without needing any
@@ -45,7 +46,7 @@ def _build_level10_vein_overlay_texture(size: int = 256) -> Texture:
             if edge_alpha > 0.0:
                 img.setAlpha(x, y, min(0.65, edge_alpha))
 
-    rng = random.Random("level10_veins")
+    rng = random.Random("level12_veins")
     for _ in range(18):
         edge = rng.choice(("top", "bottom", "left", "right"))
         if edge in ("top", "bottom"):
@@ -72,7 +73,7 @@ def _build_level10_vein_overlay_texture(size: int = 256) -> Texture:
             img.setXel(ix, iy, 0.6, 0.0, 0.0)
             img.setAlpha(ix, iy, 0.55 * fade)
 
-    panda_tex = PandaTexture("level10_veins")
+    panda_tex = PandaTexture("level12_veins")
     panda_tex.load(img)
     texture = Texture(panda_tex)
     texture.filtering = "linear"
@@ -80,6 +81,12 @@ def _build_level10_vein_overlay_texture(size: int = 256) -> Texture:
 
 
 class LiminalVibesGame:
+    POWERUP_HINT_DURATION = 3.0
+    POWERUP_HINT_TEXT = {
+        PowerUpType.SPRAY: "Press Space to use spray can",
+        PowerUpType.GUN: "Left click to fire gun",
+    }
+
     # Hard distance cutoff for lamp point lights, expressed in grid cells.
     _LIGHT_MAX_DISTANCE_CELLS = 2.0
     # How many walkable-graph hops away from a lamp's own cell may still receive its
@@ -98,11 +105,12 @@ class LiminalVibesGame:
         self.monster: MonsterController | None = None
         self.spider: SpiderController | None = None
         self.child: ChildCharacter | None = None
+        self.angel: WeepingAngel | None = None
         self._spider_drained_this_encounter = False
         self._level9_hug_played = False
         self._level9_transition_active = False
-        self._level10_out_of_sight = False
-        self._level10_endgame_triggered = False
+        self._level12_out_of_sight = False
+        self._level12_endgame_triggered = False
         self.ui = GameStateUI()
         self.audio = get_audio_manager()
         self.point_lights: list[PointLight] = []
@@ -124,6 +132,18 @@ class LiminalVibesGame:
         self.spray_marks: list[Entity] = []
         self.spray_cooldown = 0.0
         self.powerup_hud = PowerUpHUD(layout.left_x, self._stamina_bar_y)
+        self._collected_powerup_hints: set[PowerUpType] = set()
+        self._pending_powerup_hints: list[PowerUpType] = []
+        self._powerup_hint_timer = 0.0
+        self.powerup_hint = Text(
+            parent=camera.ui,
+            text="",
+            position=(0, -0.28),
+            origin=(0, 0),
+            scale=1.2,
+            color=color.rgb(245, 245, 238),
+            enabled=False,
+        )
 
         self.test_hud = Text(
             parent=camera.ui,
@@ -144,11 +164,11 @@ class LiminalVibesGame:
             enabled=False,
         )
 
-        # Level 10: the player has become the monster. A flat red tint plus a
+        # Level 12: the player has become the monster. A flat red tint plus a
         # procedurally-generated red "vein" texture along the screen borders
         # (both screen-space overlays parented to camera.ui) evoke the
         # monster's own bloodshot vision instead of a literal arms model.
-        self.level10_vision_tint = Entity(
+        self.level12_vision_tint = Entity(
             parent=camera.ui,
             model="quad",
             position=Vec3(0, 0, 0.06),
@@ -156,12 +176,12 @@ class LiminalVibesGame:
             color=color.rgba(160, 0, 0, 30),
             enabled=False,
         )
-        self.level10_vein_overlay = Entity(
+        self.level12_vein_overlay = Entity(
             parent=camera.ui,
             model="quad",
             position=Vec3(0, 0, 0.05),
             scale=layout.fullscreen_scale,
-            texture=_build_level10_vein_overlay_texture(),
+            texture=_build_level12_vein_overlay_texture(),
             color=color.rgba(255, 255, 255, 255),
             enabled=False,
         )
@@ -296,8 +316,8 @@ class LiminalVibesGame:
             self.monster.spawn_delay_seconds = float("inf")
             mx, mz = self.maze.world_from_cell(self.maze.monster_start_cell)
             self.monster.place_at(Vec3(mx, 0.0, mz))
-        elif self.level == 9 and self.maze.monster_start_cell is not None:
-            # Level 9's friendly monster stands motionless at the far end of the
+        elif self.level == 11 and self.maze.monster_start_cell is not None:
+            # Level 11's friendly monster stands motionless at the far end of the
             # hallway; it is never advanced by `update_monster` (see `update`),
             # so it never chases or catches the player.
             self.monster.spawn_delay_seconds = float("inf")
@@ -307,9 +327,9 @@ class LiminalVibesGame:
             to_player = Vec3(sx - mx, 0.0, sz - mz)
             if to_player.length() > 0.001:
                 self.monster.rotation_y = math.degrees(math.atan2(to_player.x, to_player.z))
-        elif self.level == 10:
-            # Level 10: the player has become the monster, so the regular
-            # scary monster never spawns/chases here (see `_update_level10`).
+        elif self.level in (10, 12):
+            # The Weeping Angel and player-monster finale replace the regular
+            # monster on levels 10 and 12.
             self.monster.spawn_delay_seconds = float("inf")
         else:
             self.monster.spawn_delay_seconds = 0.0 if self.test else 40.0
@@ -318,19 +338,25 @@ class LiminalVibesGame:
             self.spider = SpiderController(position=Vec3(0, -1000, 0))
         self._spider_drained_this_encounter = False
         self.spider.reset()
-        self.spider.spawn_delay_seconds = float("inf") if self.level in (5, 7, 9, 10) else (0.0 if self.test else 40.0)
+        self.spider.spawn_delay_seconds = float("inf") if self.level in (5, 7, 10, 11, 12) else (0.0 if self.test else 40.0)
         self.ui.set_level(self.level)
 
         if self.child is None:
             self.child = ChildCharacter(position=Vec3(0, -1000, 0))
         self.child.reset()
-        self._level10_out_of_sight = False
-        self._level10_endgame_triggered = False
-        self.player.no_sprint = self.level == 10
-        self.player.use_monster_footstep = self.level == 10
-        self.level10_vision_tint.enabled = self.level == 10
-        self.level10_vein_overlay.enabled = self.level == 10
-        if self.level == 10:
+        self._level12_out_of_sight = False
+        self._level12_endgame_triggered = False
+        self.player.no_sprint = self.level == 12
+        self.player.use_monster_footstep = self.level == 12
+        self.level12_vision_tint.enabled = self.level == 12
+        self.level12_vein_overlay.enabled = self.level == 12
+        if self.angel is None:
+            self.angel = WeepingAngel(self.audio, position=Vec3(0, -1000, 0))
+        self.angel.reset()
+        if self.level == 10 and self.maze.angel_start_cell is not None:
+            ax, az = self.maze.world_from_cell(self.maze.angel_start_cell)
+            self.angel.place_at(Vec3(ax, 0.0, az), facing_position=Vec3(sx, 0.0, sz))
+        if self.level == 12:
             # The child spawns at the far end of the maze (the same anchor
             # point normally reserved for the exit door), facing the player's
             # start position.
@@ -387,15 +413,17 @@ class LiminalVibesGame:
         self.stamina_fill.position = Vec3(self._stamina_bar_x, self._stamina_bar_y, -0.001)
         self.test_hud.position = (layout.right_x - 0.31, 0.45)
         self.powerup_hud.set_left_x(layout.left_x)
-        self.level10_vision_tint.scale = layout.fullscreen_scale
-        self.level10_vein_overlay.scale = layout.fullscreen_scale
+        self.level12_vision_tint.scale = layout.fullscreen_scale
+        self.level12_vein_overlay.scale = layout.fullscreen_scale
 
-    def _show_death_closeup(self) -> None:
-        if self.monster is None:
+    def _show_death_closeup(self, target=None) -> None:
+        if target is None:
+            target = self.monster
+        if target is None:
             return
-        focus = self.monster.world_position + Vec3(0, 2.0, 0)
+        focus = target.world_position + Vec3(0, 2.0, 0)
         camera.parent = scene
-        camera.position = focus + self.monster.forward * 0.95 + Vec3(0, 0.06, 0)
+        camera.position = focus + target.forward * 0.95 + Vec3(0, 0.06, 0)
         camera.look_at(focus)
         camera.rotation = Vec3(camera.rotation_x, camera.rotation_y, 0)
 
@@ -405,10 +433,18 @@ class LiminalVibesGame:
         explicit `level` overrides that -- used by the "R" restart key to
         always return to level 1 regardless of how the run was launched."""
         self.level = self.start_level if level is None else level
+        self._reset_powerup_hints()
         self.ui.start_new_run(level=self.level, keep_timer=keep_timer)
         self.audio.reset_sfx_cooldowns()
         self.audio.play_ambient_loop()
         self._load_level()
+
+    def _reset_powerup_hints(self) -> None:
+        self._collected_powerup_hints.clear()
+        self._pending_powerup_hints.clear()
+        self._powerup_hint_timer = 0.0
+        self.powerup_hint.enabled = False
+        self.powerup_hint.text = ""
 
     def _advance_level(self) -> None:
         self.level += 1
@@ -436,8 +472,8 @@ class LiminalVibesGame:
             assert self.player is not None
             self.player.set_active(True)
 
-    def _update_level9(self) -> None:
-        """Level 9 ("Give the monster a hug"): the friendly monster never
+    def _update_level11(self) -> None:
+        """Level 11 ("Give the monster a hug"): the friendly monster never
         chases, so this replaces the normal monster/spider AI updates. Playing
         `monster_hug.wav` once the player is three cells away from the
         monster, and advancing the level once the player touches it."""
@@ -459,8 +495,8 @@ class LiminalVibesGame:
         if remaining_distance <= self.monster.catch_distance:
             self._start_level9_transition()
 
-    def _update_level10(self) -> None:
-        """Level 10 ("The final level"): the player has become the monster,
+    def _update_level12(self) -> None:
+        """Level 12 ("The final level"): the player has become the monster,
         chasing a small child who wanders the maze and flees (at sprint
         speed) whenever the player-monster spots it within its own field of
         view. The regular monster/spider AI is fully disabled here (see
@@ -469,7 +505,7 @@ class LiminalVibesGame:
         prompt/ability, and the catch -> monster scream -> freeze/fade/
         "END GAME" finale."""
         assert self.player is not None and self.maze is not None and self.child is not None
-        if self._level10_endgame_triggered:
+        if self._level12_endgame_triggered:
             return
 
         player_pos = self.player.world_position
@@ -480,7 +516,7 @@ class LiminalVibesGame:
         # same frame the player reaches it.
         distance_to_child = (player_flat - self.child.position).length()
         if distance_to_child <= self.child.catch_distance:
-            self._level10_endgame_triggered = True
+            self._level12_endgame_triggered = True
             self.player.set_active(False)
             self.audio.play_monster_scream(self.ui.run.survival_seconds)
             self.audio.play_endgame()
@@ -490,7 +526,19 @@ class LiminalVibesGame:
         self.child.update_child(self.maze, player_pos, self.player.forward, self.ui.run.survival_seconds)
 
         is_player_visible_to_child = is_position_visible(self.maze, self.child.world_position, self.child.forward, player_pos)
-        self._level10_out_of_sight = not is_player_visible_to_child
+        self._level12_out_of_sight = not is_player_visible_to_child
+
+    def _update_level10(self) -> None:
+        """Run the Weeping Angel encounter and use the regular death screen on capture."""
+        assert self.player is not None and self.maze is not None and self.angel is not None
+        if self.angel.update_angel(self.maze, self.player.world_position, self.player.forward):
+            self.player.set_active(False)
+            self._clear_projectiles()
+            self._show_death_closeup(self.angel)
+            self.audio.stop_weeping_angel()
+            self.audio.play_angel_scream()
+            has_extra_life = PowerUpType.HEART in self.powerups.held
+            self.ui.on_player_caught(extra_life_level=self.level if has_extra_life else None)
 
     SPRAY_COOLDOWN_SECONDS = 2.0
     SPRAY_RANGE = 2.5
@@ -598,8 +646,8 @@ class LiminalVibesGame:
                 projectile.position = new_pos
 
     def _teleport_player(self) -> None:
-        """Level 10: teleport the player-monster to a random walkable cell,
-        available only while out of the child's sight (see `_update_level10`
+        """Level 12: teleport the player-monster to a random walkable cell,
+        available only while out of the child's sight (see `_update_level12`
         and `input`). Plays the `monster_appearing` stinger as the
         player-monster reappears elsewhere in the maze."""
         if self.player is None or self.maze is None:
@@ -610,9 +658,35 @@ class LiminalVibesGame:
         self.player.position = Vec3(tx, 0.0, tz)
         self.audio.play_monster_appearing(self.ui.run.survival_seconds)
 
+    def _show_first_powerup_hint(self, kind: PowerUpType) -> None:
+        if kind not in self.POWERUP_HINT_TEXT or kind in self._collected_powerup_hints:
+            return
+        self._collected_powerup_hints.add(kind)
+        self._pending_powerup_hints.append(kind)
+        if self._powerup_hint_timer <= 0.0:
+            self._display_next_powerup_hint()
+
+    def _display_next_powerup_hint(self) -> None:
+        if not self._pending_powerup_hints:
+            self.powerup_hint.enabled = False
+            self.powerup_hint.text = ""
+            return
+        kind = self._pending_powerup_hints.pop(0)
+        self.powerup_hint.text = self.POWERUP_HINT_TEXT[kind]
+        self.powerup_hint.enabled = True
+        self._powerup_hint_timer = self.POWERUP_HINT_DURATION
+
+    def _update_powerup_hint(self, dt: float) -> None:
+        if self._powerup_hint_timer <= 0.0:
+            return
+        self._powerup_hint_timer = max(0.0, self._powerup_hint_timer - dt)
+        if self._powerup_hint_timer == 0.0:
+            self._display_next_powerup_hint()
+
     def update(self) -> None:
         self._refresh_screen_layout()
         self.ui.update()
+        self._update_powerup_hint(time.dt)
         if self._level9_transition_active:
             self._update_level9_transition()
             self._update_hud()
@@ -621,23 +695,26 @@ class LiminalVibesGame:
         if self.ui.run.running:
             assert self.player is not None and self.maze is not None and self.monster is not None and self.spider is not None
             level_test_mode = self._is_test_mode_for_level()
-            if self.level != 10 and self.maze.player_reached_exit(self.player.world_position):
+            if self.level != 12 and self.maze.player_reached_exit(self.player.world_position):
                 self._advance_level()
                 return
 
             self._update_projectiles()
             self.spray_cooldown = max(0.0, self.spray_cooldown - time.dt)
             for kind in self.powerups.update(time.dt, self.player.world_position):
+                self._show_first_powerup_hint(kind)
                 if kind is PowerUpType.LIGHTNING:
                     self.player.sprint_speed_bonus = 1.5
 
             if self.level == 7:
                 if self.audio.update_einkvan_sequence():
                     self.maze.unlock_pyramid_door()
-            elif self.level == 9:
-                self._update_level9()
             elif self.level == 10:
                 self._update_level10()
+            elif self.level == 11:
+                self._update_level11()
+            elif self.level == 12:
+                self._update_level12()
             else:
                 caught = self.monster.update_monster(
                     self.maze,
@@ -687,13 +764,13 @@ class LiminalVibesGame:
             return
 
         is_running = self.ui.run.running
-        is_level_10 = self.level == 10
-        self.stamina_bg.enabled = is_running and not is_level_10
-        self.stamina_fill.enabled = is_running and not is_level_10
-        self.teleport_hint.enabled = is_running and is_level_10 and self._level10_out_of_sight
+        is_level_12 = self.level == 12
+        self.stamina_bg.enabled = is_running and not is_level_12
+        self.stamina_fill.enabled = is_running and not is_level_12
+        self.teleport_hint.enabled = is_running and is_level_12 and self._level12_out_of_sight
         self.powerup_hud.refresh(self.powerups.held, show=is_running and self.player.enabled)
 
-        if is_level_10:
+        if is_level_12:
             self._update_test_hud()
             return
 
@@ -754,7 +831,7 @@ class LiminalVibesGame:
             return
 
         if key in ("shift", "left shift", "right shift"):
-            if self.level == 10 and self.ui.run.running and self._level10_out_of_sight:
+            if self.level == 12 and self.ui.run.running and self._level12_out_of_sight:
                 self._teleport_player()
 
 

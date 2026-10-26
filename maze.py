@@ -9,6 +9,7 @@ from panda3d.core import PNMImage, Texture as PandaTexture
 from ursina import Entity, Mesh, Texture, Vec3, color, destroy
 
 from core_logic import find_dead_ends, touches_exit_portal
+from furniture import create_furniture
 
 Cell = Tuple[int, int]
 
@@ -54,6 +55,8 @@ class MazeManager:
         self._floor_entities: dict[Cell, Entity] = {}
         self._ceiling_entities: dict[Cell, Entity] = {}
         self._wall_entities: dict[Cell, Entity] = {}
+        self.furniture_obstacles: list[tuple[float, float, float, float]] = []
+        self.angel_start_cell: Cell | None = None
 
         self._inv_cell_size: float = 1.0 / cell_size
 
@@ -77,7 +80,9 @@ class MazeManager:
             return 35
         elif self.level == 7:
             return 101
-        elif self.level == 9:
+        elif self.level == 10:
+            return 61
+        elif self.level == 11:
             return 45
         else:
             return 17
@@ -220,8 +225,11 @@ class MazeManager:
         if self.level == 7:
             return self._generate_level7_layout()
 
-        if self.level == 9:
-            return self._generate_level9_layout()
+        if self.level == 10:
+            return self._generate_level10_layout()
+
+        if self.level == 11:
+            return self._generate_level11_layout()
 
         grid = [[False for _ in range(self.grid_size)] for _ in range(self.grid_size)]
         rng = random.Random(f"{self.seed}|level|{self.level}")
@@ -290,11 +298,11 @@ class MazeManager:
         self.door_unlocked = False
         return walkable
 
-    def _generate_level9_layout(self) -> Set[Cell]:
-        """Straight hallway layout for level 9 ("Give the monster a hug"): a single
+    def _generate_level11_layout(self) -> Set[Cell]:
+        """Straight hallway layout for level 11 ("Give the monster a hug"): a single
         corridor with a friendly, motionless monster waiting at the far end and
         no exit door -- the level is completed by walking up and touching it
-        (see `LiminalVibesGame._update_level9` in main.py)."""
+        (see `LiminalVibesGame._update_level11` in main.py)."""
         walkable: Set[Cell] = set()
         for lz in range(1, self.grid_size - 1):
             walkable.add(self._global_from_local(1, lz))
@@ -310,6 +318,67 @@ class MazeManager:
         self.exit_wall_cell = (10 ** 6, 10 ** 6 + 1)
         self.door_unlocked = False
         return walkable
+
+    def _generate_level10_layout(self) -> Set[Cell]:
+        """A single open room represented by a connected grid for navigation."""
+        walkable = {
+            self._global_from_local(lx, lz)
+            for lz in range(1, self.grid_size - 1)
+            for lx in range(1, self.grid_size - 1)
+        }
+        self.start_cell = self._global_from_local(2, 2)
+        self.player_spawn_rotation_y = 0.0
+        self.exit_direction = (1, 0)
+        self.exit_cell = self._global_from_local(self.grid_size - 2, self.half_grid)
+        self.exit_wall_cell = self._global_from_local(self.grid_size - 1, self.half_grid)
+        self.angel_start_cell = self._global_from_local(self.grid_size - 3, self.grid_size - 3)
+        return walkable
+
+    def _add_furniture(self) -> None:
+        rng = random.Random(f"{self.seed}|furniture|{self.level}")
+        excluded = {
+            self.start_cell,
+            self.exit_cell,
+            self.exit_wall_cell,
+            self.monster_start_cell,
+            self.angel_start_cell,
+        }
+        candidates = [
+            cell for cell in self.walkable_cells
+            if cell not in excluded
+            and (self.level == 10 or sum(1 for _ in self.walkable_neighbors(cell)) >= 2)
+        ]
+        if self.level == 10:
+            candidates = [
+                cell for cell in candidates
+                if abs(cell[0] - self.start_cell[0]) + abs(cell[1] - self.start_cell[1]) > 2
+                and abs(cell[0] - self.angel_start_cell[0]) + abs(cell[1] - self.angel_start_cell[1]) > 2
+                and abs(cell[0] - self.exit_cell[0]) + abs(cell[1] - self.exit_cell[1]) > 2
+            ]
+            count = min(900, max(150, len(candidates) // 4))
+        else:
+            count = min(24, max(6, len(candidates) // 14))
+        rng.shuffle(candidates)
+
+        for cell in candidates[:count]:
+            wx, wz = self.world_from_cell(cell)
+            kind = "sofa" if rng.random() < 0.34 else "chair"
+            rotation = rng.choice((0.0, 90.0, 180.0, 270.0))
+            # Keep the center-to-center paths clear while letting furniture clip
+            # visibly into nearby walls and still retain its own collision box.
+            offset_x = rng.choice((-1.55, 1.55))
+            offset_z = rng.choice((-1.55, 1.55))
+            position = Vec3(wx + offset_x, 0.0, wz + offset_z)
+            # Level 9 furniture may float anywhere up to poking through the ceiling.
+            elevation = 0.0
+            if self.level == 9 and rng.random() < 0.6:
+                elevation = rng.uniform(0.3, 2.5)
+            on_side = rng.random() < 0.3
+            entity, half_x, half_z = create_furniture(kind, position, rotation, elevation, on_side)
+            self.entities.append(entity)
+            # Furniture hanging above head height must not block walking.
+            if elevation < 1.7:
+                self.furniture_obstacles.append((position.x, position.z, half_x, half_z))
 
     def _pick_farthest_cell(self, start: Cell) -> Cell:
         visited = {start}
@@ -619,6 +688,10 @@ class MazeManager:
         if self.level == 7:
             self._build_entities_level7()
             return
+        if self.level == 10:
+            self._build_entities_level10()
+            self._add_furniture()
+            return
 
         wall_height = self.wall_height
         wall_color = self.wall_surface_color
@@ -684,9 +757,72 @@ class MazeManager:
                     self.entities.append(wall_entity)
                     self._wall_entities[(gx, gz)] = wall_entity
 
+        if self.level == 9:
+            self._add_furniture()
+
+    def _build_entities_level10(self) -> None:
+        room_width = (self.grid_size - 2) * self.cell_size
+        floor_entity = Entity(
+            model="cube",
+            position=Vec3(0, 0, 0),
+            scale=Vec3(room_width, 0.1, room_width),
+            color=self.floor_surface_color,
+            texture=self.floor_texture,
+            texture_scale=(room_width / self.cell_size * 2.2, room_width / self.cell_size * 2.2),
+        )
+        ceiling_entity = Entity(
+            model="cube",
+            position=Vec3(0, self.wall_height, 0),
+            scale=Vec3(room_width, 0.1, room_width),
+            color=self.ceiling_surface_color,
+            texture=self.ceiling_texture,
+            texture_scale=(room_width / self.cell_size * 1.9, room_width / self.cell_size * 1.9),
+        )
+        self.entities.extend((floor_entity, ceiling_entity))
+        for cell in self.walkable_cells:
+            self._floor_entities[cell] = floor_entity
+            self._ceiling_entities[cell] = ceiling_entity
+
+        for cell in sorted(self.walkable_cells):
+            gx, gz = cell
+            if gx % 6 == 0 and gz % 6 == 0:
+                x, z = self.world_from_cell(cell)
+                lamp_pos = Vec3(x, self.wall_height - 0.07, z)
+                self.entities.append(
+                    Entity(
+                        model="cube",
+                        position=lamp_pos,
+                        scale=Vec3(self.cell_size * 0.72, 0.02, self.cell_size * 0.28),
+                        color=color.rgb(255, 255, 240),
+                    )
+                )
+                self.lamp_positions.append(lamp_pos)
+                self.lamp_cells.append(cell)
+
+        for lz in range(self.grid_size):
+            for lx in range(self.grid_size):
+                if 0 < lx < self.grid_size - 1 and 0 < lz < self.grid_size - 1:
+                    continue
+                cell = self._global_from_local(lx, lz)
+                x, z = self.world_from_cell(cell)
+                if cell == self.exit_wall_cell:
+                    self._append_exit_door_entities(x, z, self.wall_height, cell)
+                else:
+                    wall = Entity(
+                        model="cube",
+                        position=Vec3(x, self.wall_height / 2.0, z),
+                        scale=Vec3(self.cell_size, self.wall_height, self.cell_size),
+                        color=self.wall_surface_color,
+                        texture=self.wall_texture,
+                        texture_scale=(1.0, 1.4),
+                        collider="box",
+                    )
+                    self.entities.append(wall)
+                    self._wall_entities[cell] = wall
+
     def _generate_level(self) -> None:
         self.walkable_cells = self._generate_walkable_cells()
-        if self.level not in (5, 7, 9):
+        if self.level not in (5, 7, 10, 11):
             self.start_cell = self._global_from_local(1, 1)
             self.monster_start_cell = None
             self.player_spawn_rotation_y = 0.0
@@ -708,6 +844,7 @@ class MazeManager:
         self._floor_entities.clear()
         self._ceiling_entities.clear()
         self._wall_entities.clear()
+        self.furniture_obstacles.clear()
 
     def raycast_wall(self, origin: Vec3, direction: Vec3, max_distance: float) -> tuple[Vec3, Vec3] | None:
         """March a ray through the grid; return (hit point, wall normal pointing into
@@ -787,6 +924,40 @@ class MazeManager:
 
     def is_walkable_cell(self, cell: Cell) -> bool:
         return cell in self.walkable_cells
+
+    def can_occupy_position(self, position: Vec3, radius: float = 0.0, ignore_furniture: bool = False) -> bool:
+        probe_radius = max(0.0, radius)
+        probes = (
+            (0.0, 0.0),
+            (probe_radius, 0.0),
+            (-probe_radius, 0.0),
+            (0.0, probe_radius),
+            (0.0, -probe_radius),
+            (probe_radius * 0.7, probe_radius * 0.7),
+            (probe_radius * 0.7, -probe_radius * 0.7),
+            (-probe_radius * 0.7, probe_radius * 0.7),
+            (-probe_radius * 0.7, -probe_radius * 0.7),
+        )
+        for ox, oz in probes:
+            if self.cell_from_world(Vec3(position.x + ox, 0, position.z + oz)) not in self.walkable_cells:
+                return False
+
+        for center_x, center_z, half_x, half_z in (() if ignore_furniture else self.furniture_obstacles):
+            closest_x = max(center_x - half_x, min(position.x, center_x + half_x))
+            closest_z = max(center_z - half_z, min(position.z, center_z + half_z))
+            dx = position.x - closest_x
+            dz = position.z - closest_z
+            if dx * dx + dz * dz < probe_radius * probe_radius:
+                return False
+        return True
+
+    def navigation_cell_for_position(self, position: Vec3) -> Cell:
+        cell = self.cell_from_world(position)
+        if cell in self.walkable_cells:
+            return cell
+        if not self.walkable_cells:
+            return cell
+        return min(self.walkable_cells, key=lambda c: (abs(c[0] - cell[0]) + abs(c[1] - cell[1]), c))
 
     def walkable_neighbors(self, cell: Cell) -> Iterable[Cell]:
         x, z = cell

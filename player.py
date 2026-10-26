@@ -43,8 +43,8 @@ class PlayerController(Entity):
         self.stamina_refill_rate = 0.95
         self.sprinting = False
         self.exhausted = False  # True from stamina=0 until fully refilled
-        self.no_sprint = False  # Level 10: player-monster cannot sprint at all
-        self.use_monster_footstep = False  # Level 10: play the monster's own footfall sound
+        self.no_sprint = False  # Level 12: player-monster cannot sprint at all
+        self.use_monster_footstep = False  # Level 12: play the monster's own footfall sound
         self.current_maze: MazeManager | None = None
         self._mouse_pointer_centered = False
         self._mouse_bias_x = 0.0
@@ -180,26 +180,7 @@ class PlayerController(Entity):
         maze = self.current_maze
         if maze is None:
             return True
-
-        # Sample center + perimeter points to approximate circular collider occupancy.
-        r = self.collider_radius * 0.92
-        diagonal = r * 0.7
-        probes = (
-            (0.0, 0.0),
-            (r, 0.0),
-            (-r, 0.0),
-            (0.0, r),
-            (0.0, -r),
-            (diagonal, diagonal),
-            (diagonal, -diagonal),
-            (-diagonal, diagonal),
-            (-diagonal, -diagonal),
-        )
-        for ox, oz in probes:
-            probe = Vec3(candidate_position.x + ox, 0.0, candidate_position.z + oz)
-            if not maze.is_walkable_cell(maze.cell_from_world(probe)):
-                return False
-        return True
+        return maze.can_occupy_position(candidate_position, radius=self.collider_radius * 0.92)
 
     @staticmethod
     def _xy_from_input(value: object) -> tuple[float, float]:

@@ -4,7 +4,7 @@ import math
 import random
 from enum import Enum
 
-from ursina import Entity, Vec3, camera, color, destroy
+from ursina import Entity, Mesh, Vec3, camera, color, destroy
 
 from core_logic import level_has_powerups
 
@@ -16,17 +16,21 @@ class PowerUpType(Enum):
     SPRAY = "spray"
 
 
+# Lightning bolt as one solid polygon (no seams between parts), triangulated by hand.
+_BOLT_POINTS = ((0.12, 0.5), (-0.22, -0.04), (-0.02, -0.04), (-0.12, -0.5), (0.22, 0.06), (0.02, 0.06))
+_BOLT_TRIANGLES = ((0, 1, 2), (0, 2, 5), (2, 4, 5), (2, 3, 4))
+
 # Icon parts in unit space (-0.5..0.5): (shape, x, y, width, height, rotation_z, color)
 _ICON_SPECS = {
     PowerUpType.HEART: (
-        ("circle", -0.17, 0.12, 0.40, 0.40, 0, color.rgb(225, 30, 45)),
-        ("circle", 0.17, 0.12, 0.40, 0.40, 0, color.rgb(225, 30, 45)),
-        ("quad", 0.0, -0.06, 0.43, 0.43, 45, color.rgb(225, 30, 45)),
+        # A square rotated 45 degrees with a circle (diameter = side) centred on the
+        # midpoint of each upper side: lobe centres sit at (+-s/(2*sqrt2), c + s/(2*sqrt2)).
+        ("circle", -0.1414, 0.1114, 0.40, 0.40, 0, color.rgb(225, 30, 45)),
+        ("circle", 0.1414, 0.1114, 0.40, 0.40, 0, color.rgb(225, 30, 45)),
+        ("quad", 0.0, -0.03, 0.40, 0.40, 45, color.rgb(225, 30, 45)),
     ),
     PowerUpType.LIGHTNING: (
-        ("quad", 0.07, 0.21, 0.17, 0.55, -25, color.rgb(255, 225, 40)),
-        ("quad", -0.07, -0.21, 0.17, 0.55, -25, color.rgb(255, 225, 40)),
-        ("quad", 0.0, 0.0, 0.42, 0.14, 0, color.rgb(255, 225, 40)),
+        ("poly", _BOLT_POINTS, _BOLT_TRIANGLES, color.rgb(255, 225, 40)),
     ),
     PowerUpType.GUN: (
         ("quad", 0.0, 0.08, 0.62, 0.2, 0, color.rgb(70, 75, 85)),
@@ -35,29 +39,60 @@ _ICON_SPECS = {
     ),
     PowerUpType.SPRAY: (
         ("quad", 0.0, -0.08, 0.32, 0.6, 0, color.rgb(200, 205, 210)),
-        ("quad", 0.0, 0.0, 0.32, 0.22, 0, color.rgb(215, 35, 40)),
-        ("quad", 0.0, 0.3, 0.18, 0.12, 0, color.rgb(60, 62, 68)),
-        ("quad", 0.15, 0.36, 0.14, 0.05, 0, color.rgb(60, 62, 68)),
+        ("quad", 0.0, 0.0, 0.35, 0.22, 0, color.rgb(215, 35, 40)),
+        ("quad", 0.0, 0.28, 0.18, 0.12, 0, color.rgb(60, 62, 68)),
+        ("quad", 0.15, 0.31, 0.14, 0.05, 0, color.rgb(60, 62, 68)),
     ),
 }
+
+
+def _poly_mesh(points, triangles, size: float, half_depth: float | None) -> Mesh:
+    """Flat double-sided polygon, or an extruded prism when `half_depth` is given."""
+    if half_depth is None:
+        verts = [Vec3(x * size, y * size, 0) for x, y in points]
+        tris = [t for t in triangles] + [(t[2], t[1], t[0]) for t in triangles]
+        return Mesh(vertices=verts, triangles=tris, mode="triangle")
+
+    n = len(points)
+    verts = [Vec3(x * size, y * size, -half_depth) for x, y in points] + [Vec3(x * size, y * size, half_depth) for x, y in points]
+    tris = [t for t in triangles] + [(t[0] + n, t[1] + n, t[2] + n) for t in triangles]
+    for i in range(n):
+        j = (i + 1) % n
+        tris.append((i, j, j + n))
+        tris.append((i, j + n, i + n))
+    return Mesh(vertices=verts, triangles=tris, mode="triangle")
 
 
 def build_icon(kind: PowerUpType, parent, size: float, flat: bool) -> Entity:
     """Build a power-up symbol. `flat` -> 2D HUD icon; otherwise a chunky 3D one."""
     root = Entity(parent=parent)
-    for shape, x, y, w, h, rot, col in _ICON_SPECS[kind]:
+    for index, part in enumerate(_ICON_SPECS[kind]):
+        # Later parts are slightly thicker so overlapping faces are never coplanar (z-fighting).
+        depth = (0.18 + 0.004 * index) * size
+        if part[0] == "poly":
+            _, points, triangles, col = part
+            Entity(parent=root, model=_poly_mesh(points, triangles, size, None if flat else depth * 0.5), color=col, unlit=True, double_sided=True)
+            continue
+        shape, x, y, w, h, rot, col = part
         if flat:
             Entity(parent=root, model=shape, position=Vec3(x * size, y * size, 0), scale=Vec3(w * size, h * size, 1), rotation_z=rot, color=col)
         else:
-            model = "sphere" if shape == "circle" else "cube"
+            if shape == "circle":
+                # Extruded disc so round parts have the same thickness as the box parts.
+                ring = [(0.5 * math.cos(i * math.tau / 24), 0.5 * math.sin(i * math.tau / 24)) for i in range(24)]
+                fan = [(0, i, i + 1) for i in range(1, 23)]
+                model = _poly_mesh(ring, fan, 1.0, 0.5)
+            else:
+                model = "cube"
             Entity(
                 parent=root,
                 model=model,
                 position=Vec3(x * size, y * size, 0),
-                scale=Vec3(w * size, h * size, 0.18 * size),
+                scale=Vec3(w * size, h * size, depth),
                 rotation_z=rot,
                 color=col,
                 unlit=True,
+                double_sided=True,
             )
     return root
 

@@ -11,7 +11,7 @@ from monster import astar_path, is_position_visible
 
 
 class ChildCharacter(Entity):
-    """Level 10's fleeing child: a small humanoid that continuously wanders
+    """Level 12's fleeing child: a small humanoid that continuously wanders
     the maze via simple pathfinding, and flees (faster, toward a distant
     walkable cell) whenever the player-monster spots it within its own
     field of view."""
@@ -189,7 +189,7 @@ class ChildCharacter(Entity):
         self.path_cells = [child_cell, next_cell]
 
     def is_visible_to(self, maze: MazeManager, viewer_position: Vec3, viewer_forward: Vec3 | None = None) -> bool:
-        """Whether this child can be seen from `viewer_position`. Level 10
+        """Whether this child can be seen from `viewer_position`. Level 12
         reuses this (inverted, with the child as the "viewer") to determine
         whether the player-monster is hidden from the child and may
         teleport."""
